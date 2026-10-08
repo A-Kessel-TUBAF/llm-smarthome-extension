@@ -1,0 +1,9 @@
+name = "SmartHomeFormal"
+defaultTargets = ["SmartHome"]
+
+[[lean_lib]]
+name = "SmartHome"
+
+[[lean_exe]]
+name = "allocation-check"
+root = "Main"
