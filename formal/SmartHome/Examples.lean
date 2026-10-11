@@ -84,18 +84,18 @@ def setBedroomTemperature (c : Int) : Task :=
   { device := "thermostat", op := "set_temperature",
     args := [("room", room "bedroom"), ("celsius", .int c)] }
 
-/-- Set brightness of the lights in room `r` to `l` %. -/
-def dim (r : String) (l : Int) : Task :=
+/-- Set brightness of the lights in room `r` to `l` % (dimming or brightening). -/
+def setBrightness (r : String) (l : Int) : Task :=
   { device := "lighting", op := "set_brightness", args := [("room", room r), ("level", .int l)] }
 
 /-- The thermostat task writes exactly `bedroomTemperature`. -/
 example : writesOf cards (setBedroomTemperature 23) = [bedroomTemperature] := rfl
 
 /-- Set the bedroom temperature and dim its lights: two devices, no shared writes. -/
-def goodBatch : Batch := [setBedroomTemperature 23, dim "bedroom" 30]
+def goodBatch : Batch := [setBedroomTemperature 23, setBrightness "bedroom" 30]
 
 /-- Dim the bedroom and the living room: same device and property, different rooms. -/
-def twoRoomsBatch : Batch := [dim "bedroom" 30, dim "living_room" 0]
+def twoRoomsBatch : Batch := [setBrightness "bedroom" 30, setBrightness "living_room" 0]
 
 /-- Two tasks set the bedroom temperature. -/
 def conflictBatch : Batch := [setBedroomTemperature 23, setBedroomTemperature 19]
