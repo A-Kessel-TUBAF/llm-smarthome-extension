@@ -23,16 +23,22 @@ A batch is well-allocated when
 1. every task names a device that has a card, and an operation on that card,
 2. every parameter of the operation is supplied, with a value of its type (booleans,
    integers inside their range, identifiers of the right kind such as `RoomID`),
-3. the operation's preconditions hold in the observed state, and
-4. no two tasks of the batch write the same state variable (write–write conflict freedom).
+3. every state variable the operation writes is determined (its room is known from the card or
+   from the task's arguments),
+4. the operation's preconditions hold in the observed state, and
+5. no two tasks of the batch write the same state variable (write–write conflict freedom).
+
+A *state variable* is one property of one device, optionally in one room, e.g. the temperature
+setting of the thermostat in the bedroom. Cards refer to variables of their own device only and
+may leave the room to a task argument, so a task can never write another device's state.
 
 The theorem is proved without `sorry` and uses only Lean's standard axioms.
 
-`SmartHome/Examples.lean` contains the lighting card from the extension plan, a thermostat
-card, and batches that are accepted or rejected (unknown device, out-of-range argument,
-missing argument, wrongly typed argument, identifier of the wrong kind, write conflict,
-failed precondition). The `#guard` lines are checked at
-build time.
+`SmartHome/Examples.lean` contains a thermostat card, the lighting card from the extension
+plan, and batches that are accepted (two devices; the same device in two rooms) or rejected
+(write conflict, out-of-range or wrongly typed argument, missing argument, identifier of the
+wrong kind, unknown device, a room without that device, a device that is offline). The
+`#guard` lines and the `example` are checked at build time.
 
 ## Building
 
@@ -50,10 +56,8 @@ The Lean version is pinned in `lean-toolchain`; `elan` downloads it on first use
 
 * Values are typed: booleans, integers and identifiers of a kind (e.g. `RoomID`). Identifiers
   are checked by kind only; any room name is accepted. A list of valid rooms is a next step.
-* State variables are not indexed by room: `set_brightness` writes `light.brightness` whatever
-  the `room` argument is. So dimming the bedroom and the living room in one batch is
-  rejected as a write conflict. Room-indexed variables (e.g. `light[room].brightness`) would
-  fix this.
+* Cards can only refer to their own device's variables, for reading as well as writing. Reading
+  another device's state (e.g. a thermostat reading a window sensor) is a next step.
 * An argument supplied twice is checked only at its first occurrence. Rejecting duplicate or
   unknown arguments is a next step.
 * Conflicts are write–write only. Read–write conflicts (one task reads what another writes)

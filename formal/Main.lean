@@ -7,10 +7,12 @@ def report (name : String) (s : State) (b : Batch) : IO Unit :=
 
 def main : IO Unit := do
   report "goodBatch" state goodBatch
+  report "twoRoomsBatch" state twoRoomsBatch
   report "conflictBatch" state conflictBatch
+  report "tooHotBatch" state tooHotBatch
   report "unknownDeviceBatch" state unknownDeviceBatch
-  report "outOfRangeBatch" state outOfRangeBatch
   report "missingArgBatch" state missingArgBatch
   report "wrongTypeBatch" state wrongTypeBatch
   report "wrongKindBatch" state wrongKindBatch
-  report "goodBatch (lights offline)" stateLightsOffline goodBatch
+  report "noSuchRoomBatch" state noSuchRoomBatch
+  report "goodBatch (thermostat offline)" stateThermostatOffline goodBatch

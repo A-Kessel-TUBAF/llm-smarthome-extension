@@ -15,8 +15,13 @@ A batch is well-allocated when
 1. every task names a device that has a card and an operation on that card,
 2. every parameter of the operation is supplied, with a value of its type (integers: inside
    their range),
-3. the operation's preconditions hold in the observed state, and
-4. no two tasks of the batch write the same state variable.
+3. every state variable the operation writes is determined, i.e. its room is known from the
+   card or from the task's arguments,
+4. the operation's preconditions hold in the observed state, and
+5. no two tasks of the batch write the same state variable.
+
+Cards refer to state variables of their own device only (see `resolveVar`), so a task can never
+write another device's state.
 -/
 
 namespace SmartHome
@@ -43,10 +48,25 @@ def stateVal (s : State) (v : StateVar) : Option Value :=
 def resolve (cards : List AgentCard) (t : Task) : Option Operation :=
   (findCard cards t.device).bind (fun c ↦ findOp c t.op)
 
+/-- The room that reference `r` denotes under arguments `args`: `some none` for the whole home,
+`some (some room)` for a room, `none` if a room argument is missing or not a `RoomID`. -/
+def resolveRoom (args : List (String × Value)) : RoomRef → Option (Option RoomId)
+  | .home => some none
+  | .fixed r => some (some r)
+  | .param p =>
+    match argVal args p with
+    | some (.id k r) => if k = "RoomID" then some (some r) else none
+    | _ => none
+
+/-- The state variable of device `d` that the card reference `v` denotes under arguments `args`,
+if its room can be determined. -/
+def resolveVar (d : DeviceId) (args : List (String × Value)) (v : VarRef) : Option StateVar :=
+  (resolveRoom args v.room).map fun r ↦ { device := d, room := r, prop := v.prop }
+
 /-- The state variables written by task `t` (empty if the task cannot be resolved). -/
 def writesOf (cards : List AgentCard) (t : Task) : List StateVar :=
   match resolve cards t with
-  | some op => op.writes
+  | some op => op.writes.filterMap (resolveVar t.device t.args)
   | none => []
 
 /-! ## Specification -/
@@ -63,15 +83,22 @@ def HasType : Value → ParamType → Prop
 def ArgsOK (op : Operation) (args : List (String × Value)) : Prop :=
   ∀ p ∈ op.params, ∃ v, argVal args p.name = some v ∧ HasType v p.ty
 
-/-- Condition `c` holds in state `s` under arguments `args`. -/
-def CondHolds (s : State) (args : List (String × Value)) : Cond → Prop
-  | .eqConst var c => stateVal s var = some c
-  | .eqParam var p => ∃ v, argVal args p = some v ∧ stateVal s var = some v
+/-- Every state variable that `op` writes is determined for device `d` under arguments `args`. -/
+def WritesResolve (d : DeviceId) (args : List (String × Value)) (op : Operation) : Prop :=
+  ∀ w ∈ op.writes, ∃ x, resolveVar d args w = some x
 
-/-- Task `t` is admissible: its device and operation exist, its arguments are well-typed and
-the operation's preconditions hold in the observed state. -/
+/-- Condition `c` holds in state `s`, for device `d` under arguments `args`. -/
+def CondHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond → Prop
+  | .eqConst var c => ∃ x, resolveVar d args var = some x ∧ stateVal s x = some c
+  | .eqParam var p =>
+    ∃ x v, resolveVar d args var = some x ∧ argVal args p = some v ∧ stateVal s x = some v
+
+/-- Task `t` is admissible: its device and operation exist, its arguments are well-typed, the
+variables it writes are determined, and the operation's preconditions hold in the observed
+state. -/
 def TaskOK (cards : List AgentCard) (s : State) (t : Task) : Prop :=
-  ∃ op, resolve cards t = some op ∧ ArgsOK op t.args ∧ ∀ c ∈ op.pre, CondHolds s t.args c
+  ∃ op, resolve cards t = some op ∧ ArgsOK op t.args ∧ WritesResolve t.device t.args op ∧
+    ∀ c ∈ op.pre, CondHolds s t.device t.args c
 
 /-- Two lists of state variables have no element in common. -/
 def Disjoint (a b : List StateVar) : Prop := ∀ x ∈ a, x ∉ b
@@ -98,18 +125,27 @@ def argsOK (op : Operation) (args : List (String × Value)) : Bool :=
     | some v => hasType v p.ty
     | none => false
 
+/-- Executable version of `WritesResolve`. -/
+def writesResolve (d : DeviceId) (args : List (String × Value)) (op : Operation) : Bool :=
+  op.writes.all fun w ↦ (resolveVar d args w).isSome
+
 /-- Executable version of `CondHolds`. -/
-def condHolds (s : State) (args : List (String × Value)) : Cond → Bool
-  | .eqConst var c => decide (stateVal s var = some c)
-  | .eqParam var p =>
-    match argVal args p with
-    | some v => decide (stateVal s var = some v)
+def condHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond → Bool
+  | .eqConst var c =>
+    match resolveVar d args var with
+    | some x => decide (stateVal s x = some c)
     | none => false
+  | .eqParam var p =>
+    match resolveVar d args var, argVal args p with
+    | some x, some v => decide (stateVal s x = some v)
+    | _, _ => false
 
 /-- Executable version of `TaskOK`. -/
 def taskOK (cards : List AgentCard) (s : State) (t : Task) : Bool :=
   match resolve cards t with
-  | some op => argsOK op t.args && op.pre.all (condHolds s t.args)
+  | some op =>
+    argsOK op t.args && writesResolve t.device t.args op &&
+      op.pre.all (condHolds s t.device t.args)
   | none => false
 
 /-- Executable version of `Disjoint`. -/
@@ -142,20 +178,29 @@ theorem argsOK_sound {op : Operation} {args : List (String × Value)}
     simp only [hv] at hp'
     exact ⟨v, rfl, hasType_sound hp'⟩
 
-theorem condHolds_sound {s : State} {args : List (String × Value)} {c : Cond}
-    (h : condHolds s args c = true) : CondHolds s args c := by
+theorem writesResolve_sound {d : DeviceId} {args : List (String × Value)} {op : Operation}
+    (h : writesResolve d args op = true) : WritesResolve d args op := by
+  intro w hw
+  exact Option.isSome_iff_exists.mp (List.all_eq_true.mp h w hw)
+
+theorem condHolds_sound {s : State} {d : DeviceId} {args : List (String × Value)} {c : Cond}
+    (h : condHolds s d args c = true) : CondHolds s d args c := by
   cases c with
   | eqConst var k =>
-    simp only [condHolds, decide_eq_true_eq] at h
-    simp only [CondHolds]
-    exact h
+    cases hx : resolveVar d args var with
+    | none => simp [condHolds, hx] at h
+    | some x =>
+      simp only [condHolds, hx, decide_eq_true_eq] at h
+      exact ⟨x, hx, h⟩
   | eqParam var p =>
-    simp only [CondHolds]
-    cases hv : argVal args p with
-    | none => simp [condHolds, hv] at h
-    | some v =>
-      simp only [condHolds, hv, decide_eq_true_eq] at h
-      exact ⟨v, rfl, h⟩
+    cases hx : resolveVar d args var with
+    | none => simp [condHolds, hx] at h
+    | some x =>
+      cases hv : argVal args p with
+      | none => simp [condHolds, hx, hv] at h
+      | some v =>
+        simp only [condHolds, hx, hv, decide_eq_true_eq] at h
+        exact ⟨x, v, hx, hv, h⟩
 
 theorem taskOK_sound {cards : List AgentCard} {s : State} {t : Task}
     (h : taskOK cards s t = true) : TaskOK cards s t := by
@@ -164,7 +209,7 @@ theorem taskOK_sound {cards : List AgentCard} {s : State} {t : Task}
   | none => simp [taskOK, hr] at h
   | some op =>
     simp only [taskOK, hr, Bool.and_eq_true] at h
-    exact ⟨op, rfl, argsOK_sound h.1,
+    exact ⟨op, rfl, argsOK_sound h.1.1, writesResolve_sound h.1.2,
       fun c hc ↦ condHolds_sound (List.all_eq_true.mp h.2 c hc)⟩
 
 theorem disjoint_sound {a b : List StateVar} (h : disjoint a b = true) : Disjoint a b := by

@@ -8,6 +8,10 @@ an operation and arguments. A *batch* is a list of tasks meant to run together.
 
 Values are typed: booleans, integers, and identifiers of a given kind (e.g. a `RoomID`), so the
 agent card example can be written as is, e.g. `light.online == true` and `room : RoomID`.
+
+A *state variable* is one property of one device, optionally in one room, e.g. the temperature
+setting of the thermostat in the bedroom. Cards refer to the variables of their own device only,
+and may leave the room to a task argument (e.g. "the brightness in the room given by `room`").
 -/
 
 namespace SmartHome
@@ -18,8 +22,35 @@ abbrev DeviceId := String
 /-- Name of an operation offered by a device, e.g. `"set_brightness"`. -/
 abbrev OpName := String
 
-/-- A state variable of the home, e.g. `"light.brightness"`. -/
-abbrev StateVar := String
+/-- Name of a room, e.g. `"bedroom"`. -/
+abbrev RoomId := String
+
+/-- A state variable of the home: one property of one device, optionally in one room, e.g. the
+temperature setting of the thermostat in the bedroom. -/
+structure StateVar where
+  device : DeviceId
+  /-- The room, or `none` for a property of the whole home. -/
+  room : Option RoomId
+  prop : String
+  deriving Repr, DecidableEq
+
+/-- How an agent card refers to the room of a state variable. -/
+inductive RoomRef where
+  /-- The variable belongs to the whole home, not to a room. -/
+  | home
+  /-- A fixed room, e.g. `"bedroom"`. -/
+  | fixed (r : RoomId)
+  /-- The room given by the task's argument named `p`, e.g. `room`. -/
+  | param (p : String)
+  deriving Repr, DecidableEq
+
+/-- How an agent card refers to a state variable of its own device: the property, and where the
+room comes from. For example, `{ prop := "brightness", room := .param "room" }` is the brightness
+in the room the task names. -/
+structure VarRef where
+  prop : String
+  room : RoomRef
+  deriving Repr, DecidableEq
 
 /-- A value of a state variable or of a task argument. -/
 inductive Value where
@@ -50,17 +81,17 @@ structure Param where
 /-- A condition on the home state, used for pre- and postconditions. -/
 inductive Cond where
   /-- `var == c` for a constant `c`, e.g. `light.online == true`. -/
-  | eqConst (var : StateVar) (c : Value)
+  | eqConst (var : VarRef) (c : Value)
   /-- `var == p` where `p` is a parameter of the operation, e.g. `light.brightness == level`. -/
-  | eqParam (var : StateVar) (p : String)
+  | eqParam (var : VarRef) (p : String)
   deriving Repr, DecidableEq
 
 /-- One operation of an agent card. -/
 structure Operation where
   name : OpName
   params : List Param
-  reads : List StateVar
-  writes : List StateVar
+  reads : List VarRef
+  writes : List VarRef
   pre : List Cond
   post : List Cond
   deriving Repr
