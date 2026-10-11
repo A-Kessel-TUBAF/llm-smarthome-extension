@@ -41,7 +41,7 @@ def argVal (args : List (String × Value)) (p : String) : Option Value :=
   (args.find? (fun a ↦ a.1 == p)).map (·.2)
 
 /-- The value of state variable `v` in state `s`, if known. -/
-def stateVal (s : State) (v : StateVar) : Option Value :=
+def stateVal (s : HomeState) (v : StateVar) : Option Value :=
   (s.find? (fun a ↦ a.1 == v)).map (·.2)
 
 /-- The operation a task refers to, if its device and operation exist. -/
@@ -88,7 +88,7 @@ def WritesResolve (d : DeviceId) (args : List (String × Value)) (op : Operation
   ∀ w ∈ op.writes, ∃ x, resolveVar d args w = some x
 
 /-- Condition `c` holds in state `s`, for device `d` under arguments `args`. -/
-def CondHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond → Prop
+def CondHolds (s : HomeState) (d : DeviceId) (args : List (String × Value)) : Cond → Prop
   | .eqConst var c => ∃ x, resolveVar d args var = some x ∧ stateVal s x = some c
   | .eqParam var p =>
     ∃ x v, resolveVar d args var = some x ∧ argVal args p = some v ∧ stateVal s x = some v
@@ -96,7 +96,7 @@ def CondHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond 
 /-- Task `t` is admissible: its device and operation exist, its arguments are well-typed, the
 variables it writes are determined, and the operation's preconditions hold in the observed
 state. -/
-def TaskOK (cards : List AgentCard) (s : State) (t : Task) : Prop :=
+def TaskOK (cards : List AgentCard) (s : HomeState) (t : Task) : Prop :=
   ∃ op, resolve cards t = some op ∧ ArgsOK op t.args ∧ WritesResolve t.device t.args op ∧
     ∀ c ∈ op.pre, CondHolds s t.device t.args c
 
@@ -105,7 +105,7 @@ def Disjoint (a b : List StateVar) : Prop := ∀ x ∈ a, x ∉ b
 
 /-- The allocation specification: every task is admissible and no two tasks of the batch write
 the same state variable. -/
-def AllocSpec (cards : List AgentCard) (s : State) (b : Batch) : Prop :=
+def AllocSpec (cards : List AgentCard) (s : HomeState) (b : Batch) : Prop :=
   (∀ t ∈ b, TaskOK cards s t) ∧
     List.Pairwise (fun t u ↦ Disjoint (writesOf cards t) (writesOf cards u)) b
 
@@ -130,7 +130,7 @@ def writesResolve (d : DeviceId) (args : List (String × Value)) (op : Operation
   op.writes.all fun w ↦ (resolveVar d args w).isSome
 
 /-- Executable version of `CondHolds`. -/
-def condHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond → Bool
+def condHolds (s : HomeState) (d : DeviceId) (args : List (String × Value)) : Cond → Bool
   | .eqConst var c =>
     match resolveVar d args var with
     | some x => decide (stateVal s x = some c)
@@ -141,7 +141,7 @@ def condHolds (s : State) (d : DeviceId) (args : List (String × Value)) : Cond 
     | _, _ => false
 
 /-- Executable version of `TaskOK`. -/
-def taskOK (cards : List AgentCard) (s : State) (t : Task) : Bool :=
+def taskOK (cards : List AgentCard) (s : HomeState) (t : Task) : Bool :=
   match resolve cards t with
   | some op =>
     argsOK op t.args && writesResolve t.device t.args op &&
@@ -160,7 +160,7 @@ def conflictFree (cards : List AgentCard) : Batch → Bool
 
 /-- The allocation checker: accepts a batch iff every task is admissible and the batch is
 conflict-free. -/
-def check (cards : List AgentCard) (s : State) (b : Batch) : Bool :=
+def check (cards : List AgentCard) (s : HomeState) (b : Batch) : Bool :=
   b.all (taskOK cards s) && conflictFree cards b
 
 /-! ## Soundness -/
@@ -183,7 +183,7 @@ theorem writesResolve_sound {d : DeviceId} {args : List (String × Value)} {op :
   intro w hw
   exact Option.isSome_iff_exists.mp (List.all_eq_true.mp h w hw)
 
-theorem condHolds_sound {s : State} {d : DeviceId} {args : List (String × Value)} {c : Cond}
+theorem condHolds_sound {s : HomeState} {d : DeviceId} {args : List (String × Value)} {c : Cond}
     (h : condHolds s d args c = true) : CondHolds s d args c := by
   cases c with
   | eqConst var k =>
@@ -202,7 +202,7 @@ theorem condHolds_sound {s : State} {d : DeviceId} {args : List (String × Value
         simp only [condHolds, hx, hv, decide_eq_true_eq] at h
         exact ⟨x, v, hx, hv, h⟩
 
-theorem taskOK_sound {cards : List AgentCard} {s : State} {t : Task}
+theorem taskOK_sound {cards : List AgentCard} {s : HomeState} {t : Task}
     (h : taskOK cards s t = true) : TaskOK cards s t := by
   unfold TaskOK
   cases hr : resolve cards t with
@@ -227,7 +227,7 @@ theorem conflictFree_sound {cards : List AgentCard} : ∀ {b : Batch},
 
 /-- **Soundness of the allocation checker**: every batch accepted by `check` satisfies the
 allocation specification. -/
-theorem check_sound {cards : List AgentCard} {s : State} {b : Batch}
+theorem check_sound {cards : List AgentCard} {s : HomeState} {b : Batch}
     (h : check cards s b = true) : AllocSpec cards s b := by
   unfold AllocSpec
   simp only [check, Bool.and_eq_true] at h

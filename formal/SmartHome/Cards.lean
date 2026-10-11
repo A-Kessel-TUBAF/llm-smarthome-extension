@@ -113,6 +113,6 @@ structure Task where
 abbrev Batch := List Task
 
 /-- The observed home state: the value of each known state variable. -/
-abbrev State := List (StateVar × Value)
+abbrev HomeState := List (StateVar × Value)
 
 end SmartHome

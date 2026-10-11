@@ -2,7 +2,7 @@ import SmartHome
 
 open SmartHome SmartHome.Examples
 
-def report (name : String) (s : State) (b : Batch) : IO Unit :=
+def report (name : String) (s : HomeState) (b : Batch) : IO Unit :=
   IO.println s!"{name}: {if check cards s b then "ACCEPTED" else "REJECTED"}"
 
 def main : IO Unit := do

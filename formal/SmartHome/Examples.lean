@@ -64,8 +64,9 @@ def cards : List AgentCard := [thermostat, lighting]
 
 /-! ## Observed states -/
 
-/-- A thermostat in the bedroom, lights in the bedroom and living room, all online. -/
-def state : State :=
+/-- Home state when there is a thermostat in the bedroom,
+some lights in the bedroom and living room, all online. -/
+def state : HomeState :=
   [(bedroomThermostatOnline, .bool true), (bedroomTemperature, .int 21),
     (var "lighting" "bedroom" "online", .bool true),
     (var "lighting" "bedroom" "brightness", .int 70),
@@ -73,34 +74,34 @@ def state : State :=
     (var "lighting" "living_room" "brightness", .int 40)]
 
 /-- The same home, but the bedroom thermostat is offline. -/
-def stateThermostatOffline : State :=
+def stateThermostatOffline : HomeState :=
   (bedroomThermostatOnline, .bool false) :: state.tail
 
 /-! ## Tasks and batches -/
 
-/-- Set the bedroom to `c` °C. -/
-def warmBedroom (c : Int) : Task :=
+/-- Set the bedroom thermostat to `c` °C (warming or cooling). -/
+def setBedroomTemperature (c : Int) : Task :=
   { device := "thermostat", op := "set_temperature",
     args := [("room", room "bedroom"), ("celsius", .int c)] }
 
-/-- Set the lights in room `r` to `l` %. -/
+/-- Set brightness of the lights in room `r` to `l` %. -/
 def dim (r : String) (l : Int) : Task :=
   { device := "lighting", op := "set_brightness", args := [("room", room r), ("level", .int l)] }
 
 /-- The thermostat task writes exactly `bedroomTemperature`. -/
-example : writesOf cards (warmBedroom 23) = [bedroomTemperature] := rfl
+example : writesOf cards (setBedroomTemperature 23) = [bedroomTemperature] := rfl
 
-/-- Warm the bedroom and dim its lights: two devices, no shared writes. -/
-def goodBatch : Batch := [warmBedroom 23, dim "bedroom" 30]
+/-- Set the bedroom temperature and dim its lights: two devices, no shared writes. -/
+def goodBatch : Batch := [setBedroomTemperature 23, dim "bedroom" 30]
 
 /-- Dim the bedroom and the living room: same device and property, different rooms. -/
 def twoRoomsBatch : Batch := [dim "bedroom" 30, dim "living_room" 0]
 
 /-- Two tasks set the bedroom temperature. -/
-def conflictBatch : Batch := [warmBedroom 23, warmBedroom 19]
+def conflictBatch : Batch := [setBedroomTemperature 23, setBedroomTemperature 19]
 
 /-- 35 °C is outside the thermostat's range `[5, 30]`. -/
-def tooHotBatch : Batch := [warmBedroom 35]
+def tooHotBatch : Batch := [setBedroomTemperature 35]
 
 /-- The planner invented a device that has no card. -/
 def unknownDeviceBatch : Batch := [{ device := "computer", op := "open_file_explorer", args := [] }]
