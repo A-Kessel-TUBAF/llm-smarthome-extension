@@ -13,7 +13,8 @@ Three layers:
 
 A batch is well-allocated when
 1. every task names a device that has a card and an operation on that card,
-2. every parameter of the operation is supplied, with a value inside its range,
+2. every parameter of the operation is supplied, with a value of its type (integers: inside
+   their range),
 3. the operation's preconditions hold in the observed state, and
 4. no two tasks of the batch write the same state variable.
 -/
@@ -31,11 +32,11 @@ def findOp (c : AgentCard) (n : OpName) : Option Operation :=
   c.ops.find? (fun o ↦ o.name == n)
 
 /-- The value of argument `p` in `args`, if supplied. -/
-def argVal (args : List (String × Int)) (p : String) : Option Int :=
+def argVal (args : List (String × Value)) (p : String) : Option Value :=
   (args.find? (fun a ↦ a.1 == p)).map (·.2)
 
 /-- The value of state variable `v` in state `s`, if known. -/
-def stateVal (s : State) (v : StateVar) : Option Int :=
+def stateVal (s : State) (v : StateVar) : Option Value :=
   (s.find? (fun a ↦ a.1 == v)).map (·.2)
 
 /-- The operation a task refers to, if its device and operation exist. -/
@@ -50,16 +51,24 @@ def writesOf (cards : List AgentCard) (t : Task) : List StateVar :=
 
 /-! ## Specification -/
 
-/-- Every parameter of `op` is supplied by `args` with a value inside its range. -/
-def ArgsOK (op : Operation) (args : List (String × Int)) : Prop :=
-  ∀ p ∈ op.params, ∃ v, argVal args p.name = some v ∧ p.lo ≤ v ∧ v ≤ p.hi
+/-- Value `v` has parameter type `t`: a boolean for `bool`, an integer inside `[lo, hi]` for
+`int lo hi`, and an identifier of the same kind for `id kind`. -/
+def HasType : Value → ParamType → Prop
+  | .bool _, .bool => True
+  | .int n, .int lo hi => lo ≤ n ∧ n ≤ hi
+  | .id k _, .id k' => k = k'
+  | _, _ => False
+
+/-- Every parameter of `op` is supplied by `args` with a value of its type. -/
+def ArgsOK (op : Operation) (args : List (String × Value)) : Prop :=
+  ∀ p ∈ op.params, ∃ v, argVal args p.name = some v ∧ HasType v p.ty
 
 /-- Condition `c` holds in state `s` under arguments `args`. -/
-def CondHolds (s : State) (args : List (String × Int)) : Cond → Prop
+def CondHolds (s : State) (args : List (String × Value)) : Cond → Prop
   | .eqConst var c => stateVal s var = some c
   | .eqParam var p => ∃ v, argVal args p = some v ∧ stateVal s var = some v
 
-/-- Task `t` is admissible: its device and operation exist, its arguments are in range and
+/-- Task `t` is admissible: its device and operation exist, its arguments are well-typed and
 the operation's preconditions hold in the observed state. -/
 def TaskOK (cards : List AgentCard) (s : State) (t : Task) : Prop :=
   ∃ op, resolve cards t = some op ∧ ArgsOK op t.args ∧ ∀ c ∈ op.pre, CondHolds s t.args c
@@ -75,15 +84,22 @@ def AllocSpec (cards : List AgentCard) (s : State) (b : Batch) : Prop :=
 
 /-! ## Checker -/
 
+/-- Executable version of `HasType`. -/
+def hasType : Value → ParamType → Bool
+  | .bool _, .bool => true
+  | .int n, .int lo hi => decide (lo ≤ n) && decide (n ≤ hi)
+  | .id k _, .id k' => decide (k = k')
+  | _, _ => false
+
 /-- Executable version of `ArgsOK`. -/
-def argsOK (op : Operation) (args : List (String × Int)) : Bool :=
+def argsOK (op : Operation) (args : List (String × Value)) : Bool :=
   op.params.all fun p ↦
     match argVal args p.name with
-    | some v => decide (p.lo ≤ v) && decide (v ≤ p.hi)
+    | some v => hasType v p.ty
     | none => false
 
 /-- Executable version of `CondHolds`. -/
-def condHolds (s : State) (args : List (String × Int)) : Cond → Bool
+def condHolds (s : State) (args : List (String × Value)) : Cond → Bool
   | .eqConst var c => decide (stateVal s var = some c)
   | .eqParam var p =>
     match argVal args p with
@@ -113,17 +129,20 @@ def check (cards : List AgentCard) (s : State) (b : Batch) : Bool :=
 
 /-! ## Soundness -/
 
-theorem argsOK_sound {op : Operation} {args : List (String × Int)} (h : argsOK op args = true) :
-    ArgsOK op args := by
+theorem hasType_sound {v : Value} {t : ParamType} (h : hasType v t = true) : HasType v t := by
+  cases v <;> cases t <;> simp_all [hasType, HasType]
+
+theorem argsOK_sound {op : Operation} {args : List (String × Value)}
+    (h : argsOK op args = true) : ArgsOK op args := by
   intro p hp
   have hp' := List.all_eq_true.mp h p hp
   cases hv : argVal args p.name with
   | none => simp [hv] at hp'
   | some v =>
-    simp only [hv, Bool.and_eq_true, decide_eq_true_eq] at hp'
-    exact ⟨v, rfl, hp'.1, hp'.2⟩
+    simp only [hv] at hp'
+    exact ⟨v, rfl, hasType_sound hp'⟩
 
-theorem condHolds_sound {s : State} {args : List (String × Int)} {c : Cond}
+theorem condHolds_sound {s : State} {args : List (String × Value)} {c : Cond}
     (h : condHolds s args c = true) : CondHolds s args c := by
   cases c with
   | eqConst var k =>
@@ -145,7 +164,8 @@ theorem taskOK_sound {cards : List AgentCard} {s : State} {t : Task}
   | none => simp [taskOK, hr] at h
   | some op =>
     simp only [taskOK, hr, Bool.and_eq_true] at h
-    exact ⟨op, rfl, argsOK_sound h.1, fun c hc ↦ condHolds_sound (List.all_eq_true.mp h.2 c hc)⟩
+    exact ⟨op, rfl, argsOK_sound h.1,
+      fun c hc ↦ condHolds_sound (List.all_eq_true.mp h.2 c hc)⟩
 
 theorem disjoint_sound {a b : List StateVar} (h : disjoint a b = true) : Disjoint a b := by
   intro x hx

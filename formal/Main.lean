@@ -11,4 +11,6 @@ def main : IO Unit := do
   report "unknownDeviceBatch" state unknownDeviceBatch
   report "outOfRangeBatch" state outOfRangeBatch
   report "missingArgBatch" state missingArgBatch
+  report "wrongTypeBatch" state wrongTypeBatch
+  report "wrongKindBatch" state wrongKindBatch
   report "goodBatch (lights offline)" stateLightsOffline goodBatch

@@ -21,7 +21,8 @@ state variables each operation reads and writes, and pre-/postconditions
 A batch is well-allocated when
 
 1. every task names a device that has a card, and an operation on that card,
-2. every parameter of the operation is supplied, with a value inside its range,
+2. every parameter of the operation is supplied, with a value of its type (booleans,
+   integers inside their range, identifiers of the right kind such as `RoomID`),
 3. the operation's preconditions hold in the observed state, and
 4. no two tasks of the batch write the same state variable (write–write conflict freedom).
 
@@ -29,7 +30,8 @@ The theorem is proved without `sorry` and uses only Lean's standard axioms.
 
 `SmartHome/Examples.lean` contains the lighting card from the extension plan, a thermostat
 card, and batches that are accepted or rejected (unknown device, out-of-range argument,
-missing argument, write conflict, failed precondition). The `#guard` lines are checked at
+missing argument, wrongly typed argument, identifier of the wrong kind, write conflict,
+failed precondition). The `#guard` lines are checked at
 build time.
 
 ## Building
@@ -46,7 +48,14 @@ The Lean version is pinned in `lean-toolchain`; `elan` downloads it on first use
 
 ## Scope and next steps
 
-* Values are integers; booleans are encoded as `0`/`1`.
+* Values are typed: booleans, integers and identifiers of a kind (e.g. `RoomID`). Identifiers
+  are checked by kind only; any room name is accepted. A list of valid rooms is a next step.
+* State variables are not indexed by room: `set_brightness` writes `light.brightness` whatever
+  the `room` argument is. So dimming the bedroom and the living room in one batch is
+  rejected as a write conflict. Room-indexed variables (e.g. `light[room].brightness`) would
+  fix this.
+* An argument supplied twice is checked only at its first occurrence. Rejecting duplicate or
+  unknown arguments is a next step.
 * Conflicts are write–write only. Read–write conflicts (one task reads what another writes)
   are a natural next step.
 * `check_sound` is *soundness* (accepted ⇒ well-allocated). *Completeness*

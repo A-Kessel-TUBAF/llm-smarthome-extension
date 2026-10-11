@@ -6,7 +6,8 @@ operations it offers, what each operation needs (parameters, preconditions), tou
 (reads/writes) and guarantees (postconditions). A *task* is what the planner emits: a device,
 an operation and arguments. A *batch* is a list of tasks meant to run together.
 
-Values are integers; booleans are encoded as `0`/`1` (e.g. `light.online == 1`).
+Values are typed: booleans, integers, and identifiers of a given kind (e.g. a `RoomID`), so the
+agent card example can be written as is, e.g. `light.online == true` and `room : RoomID`.
 -/
 
 namespace SmartHome
@@ -20,17 +21,36 @@ abbrev OpName := String
 /-- A state variable of the home, e.g. `"light.brightness"`. -/
 abbrev StateVar := String
 
-/-- An integer parameter of an operation together with its allowed range `[lo, hi]`. -/
+/-- A value of a state variable or of a task argument. -/
+inductive Value where
+  /-- A boolean, e.g. the value of `light.online`. -/
+  | bool (b : Bool)
+  /-- An integer, e.g. a brightness level or a temperature. -/
+  | int (n : Int)
+  /-- An identifier `name` of kind `kind`, e.g. `id "RoomID" "bedroom"`. -/
+  | id (kind : String) (name : String)
+  deriving Repr, DecidableEq
+
+/-- The type of an operation parameter. -/
+inductive ParamType where
+  /-- A boolean. -/
+  | bool
+  /-- An integer in the range `[lo, hi]`, written `Integer[lo..hi]` on agent cards. -/
+  | int (lo hi : Int)
+  /-- An identifier of the given kind, e.g. `RoomID`. -/
+  | id (kind : String)
+  deriving Repr, DecidableEq
+
+/-- A parameter of an operation together with its type. -/
 structure Param where
   name : String
-  lo : Int
-  hi : Int
+  ty : ParamType
   deriving Repr, DecidableEq
 
 /-- A condition on the home state, used for pre- and postconditions. -/
 inductive Cond where
-  /-- `var == c` for a constant `c`, e.g. `light.online == 1`. -/
-  | eqConst (var : StateVar) (c : Int)
+  /-- `var == c` for a constant `c`, e.g. `light.online == true`. -/
+  | eqConst (var : StateVar) (c : Value)
   /-- `var == p` where `p` is a parameter of the operation, e.g. `light.brightness == level`. -/
   | eqParam (var : StateVar) (p : String)
   deriving Repr, DecidableEq
@@ -55,13 +75,13 @@ structure AgentCard where
 structure Task where
   device : DeviceId
   op : OpName
-  args : List (String × Int)
+  args : List (String × Value)
   deriving Repr
 
 /-- A batch of tasks intended to run together (in parallel). -/
 abbrev Batch := List Task
 
 /-- The observed home state: the value of each known state variable. -/
-abbrev State := List (StateVar × Int)
+abbrev State := List (StateVar × Value)
 
 end SmartHome
