@@ -577,67 +577,82 @@ def task_planner(state):
         context["intent_analysis"] = {"infos": state["infos"], "key_modifiers": state["key_modifiers"]}
     if repair:
         context.update(repair=repair, tasks=state["tasks"], confirmed_results=state["task_history"])
-    result = _ask('You are the central task planner. Plan the ENTIRE original_input, not only its first clause. '
-                  'Create one high-level task per distinct requested goal, assigned to its primary domain agent. '
-                  'AND or THEN may join multiple goals; preserve THEN ordering and ALL conditions, timing and locations. '
-                  'Use available agent IDs; audio_system handles music/playback. '
-                  'For a fully specified goal with known devices, skills and arguments, add actions to the task. '
-                  'These actions go directly to Python/Lean checking without a domain-agent model call. '
-                  'Include all prerequisites and local action dependencies, e.g. turn_on a1 before dim a2. '
-                  'For goals needing domain judgment, missing information or later predecessor results, omit actions; '
-                  'the domain agent will refine them. Do not guess missing values. '
-                  'The original_input is authoritative; any intent_analysis is optional, fallible supporting context. '
-                  'Check that EVERY requested goal is represented. Do not invent capabilities or extra goals. '
-                  'When repair is present, replace every repair.task_id, keeping IDs and original goals. '
-                  'You may add information-only tasks with kind="information" and parent=<affected task ID>. '
-                  'Preserve dependencies on retained tasks; do not repeat completed unrelated goals. '
-                  + graph_instruction + ' Output: {"task_queue": [{"agent_id": "lighting", '
-                  '"action": "full goal", "actions": [{"task_id": "a1", "skill_id": "turn_on", '
-                  '"arguments": {"device_id": "light_lr_ceiling"}, "depends_on": []}]}], '
-                  '"response": "reason if no tasks"}. The actions field is optional.',
-                  expected={"task_queue": list}, **context)
-    queue = []
-    for index, raw in enumerate(result["task_queue"]):
-        if not isinstance(raw, dict) or not isinstance(raw.get("action"), str) or not raw["action"].strip():
-            raise ValueError("Planner-Auftrag braucht agent_id und eine nicht leere action.")
-        if raw.get("agent_id") not in available:
-            raise ValueError("Plan enthaelt einen nicht verfuegbaren Agent.")
-        task_id = raw.get("task_id", f"t{index + 1}") if graph_mode else f"{state['request_id']}:{index}"
-        queue.append(dict(task_id=task_id, agent_id=raw["agent_id"], action=raw["action"],
-                          depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
-                          scope=raw.get("scope", []), constraints=raw.get("constraints", [])))
-        if raw.get("actions"):
-            queue[-1]["actions"] = raw["actions"]
-        if repair and task_id not in repair["task_ids"]:
-            if raw.get("kind") != "information" or raw.get("parent") not in repair["task_ids"]:
-                raise ValueError("PlanError: extra repair tasks must be information queries for an affected goal.")
-            queue[-1]["parent"] = raw["parent"]
-    if graph_mode:
-        ids = {t["task_id"] for t in queue}
-        allowed = ids | (state["tasks"].keys() if repair else set())
-        if len(ids) != len(queue) or any(not isinstance(t["depends_on"], list) or set(t["depends_on"]) - allowed for t in queue):
-            raise ValueError("PlanError: doppelte Task-ID oder unbekannte Vorgaenger.")
-        merged = {**state["tasks"], **{t["task_id"]: t for t in queue}} if repair else {t["task_id"]: t for t in queue}
-        tuple(TopologicalSorter({t["task_id"]: t["depends_on"] for t in merged.values()}).static_order())
-        if repair:
-            if not set(repair["task_ids"]).issubset(ids):
-                raise ValueError("PlanError: repair must preserve every affected task ID.")
-            for t in queue:
-                if t["task_id"] not in state["tasks"]:
-                    continue
-                # A repair may change routing/dependencies, never the user's assigned goal or constraints.
-                for key in ("action", "scope", "constraints"):
-                    t[key] = state["tasks"][t["task_id"]][key]
-            settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
-            retained = {i: a for i, a in state["action_graph"].items()
-                        if a["task"]["task_id"] not in ids or a["status"] == "success"}
-            for t in queue:
-                t["generation"] = state["tasks"].get(t["task_id"], {}).get("generation", 0) + 1
-            return Command(update={"tasks": {**state["tasks"], **{t["task_id"]: t for t in queue}},
-                                   "action_graph": retained, "repair_context": {}, "settings": settings}, goto="plan_agents")
-    return Command(update={"task_queue": queue, "tasks": {t["task_id"]: t for t in queue},
-                           "final_response": result.get("response", "") if not queue else ""},
-                   goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
+    try:
+        result = _ask('You are the central task planner. Plan the ENTIRE original_input, not only its first clause. '
+                      'Create one high-level task per distinct requested goal, assigned to its primary domain agent. '
+                      'AND or THEN may join multiple goals; preserve THEN ordering and ALL conditions, timing and locations. '
+                      'Use available agent IDs; audio_system handles music/playback. '
+                      'For a fully specified goal with known devices, skills and arguments, add actions to the task. '
+                      'These actions go directly to Python/Lean checking without a domain-agent model call. '
+                      'Include all prerequisites and local action dependencies, e.g. turn_on a1 before dim a2. '
+                      'For goals needing domain judgment, missing information or later predecessor results, omit actions; '
+                      'the domain agent will refine them. Do not guess missing values. '
+                      'The original_input is authoritative; any intent_analysis is optional, fallible supporting context. '
+                      'Check that EVERY requested goal is represented. Do not invent capabilities or extra goals. '
+                      'When repair is present, replace every ID in repair.task_ids, keeping IDs and original goals. Do not renumber tasks. '
+                      'You may add information-only tasks with kind="information" and parent=<affected task ID>. '
+                      'Preserve dependencies on retained tasks; do not repeat completed unrelated goals. '
+                      + graph_instruction + ' Output: {"task_queue": [{"task_id": "t1", "agent_id": "lighting", '
+                      '"action": "full goal", "actions": [{"task_id": "a1", "skill_id": "turn_on", '
+                      '"arguments": {"device_id": "light_lr_ceiling"}, "depends_on": []}]}], '
+                      '"response": "reason if no tasks"}. The actions field is optional.',
+                      expected={"task_queue": list}, **context)
+        queue = []
+        for index, raw in enumerate(result["task_queue"]):
+            if not isinstance(raw, dict) or not isinstance(raw.get("action"), str) or not raw["action"].strip():
+                raise ValueError("Planner-Auftrag braucht agent_id und eine nicht leere action.")
+            if raw.get("agent_id") not in available:
+                raise ValueError("Plan enthaelt einen nicht verfuegbaren Agent.")
+            task_id = raw.get("task_id", f"t{index + 1}") if graph_mode else f"{state['request_id']}:{index}"
+            queue.append(dict(task_id=task_id, agent_id=raw["agent_id"], action=raw["action"],
+                              depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
+                              scope=raw.get("scope", []), constraints=raw.get("constraints", [])))
+            if raw.get("actions"):
+                queue[-1]["actions"] = raw["actions"]
+            if repair and task_id not in repair["task_ids"]:
+                if raw.get("kind") != "information" or raw.get("parent") not in repair["task_ids"]:
+                    raise ValueError(f"PlanError: unexpected repair task {task_id!r}; expected IDs {repair['task_ids']}. "
+                                     "Extra tasks require kind=information and parent=<affected task ID>.")
+                queue[-1]["parent"] = raw["parent"]
+        if graph_mode:
+            ids = {t["task_id"] for t in queue}
+            allowed = ids | (state["tasks"].keys() if repair else set())
+            if len(ids) != len(queue) or any(not isinstance(t["depends_on"], list) or set(t["depends_on"]) - allowed for t in queue):
+                raise ValueError("PlanError: doppelte Task-ID oder unbekannte Vorgaenger.")
+            merged = {**state["tasks"], **{t["task_id"]: t for t in queue}} if repair else {t["task_id"]: t for t in queue}
+            tuple(TopologicalSorter({t["task_id"]: t["depends_on"] for t in merged.values()}).static_order())
+            if repair:
+                if not set(repair["task_ids"]).issubset(ids):
+                    raise ValueError("PlanError: repair must preserve every affected task ID.")
+                for t in queue:
+                    if t["task_id"] not in state["tasks"]:
+                        continue
+                    # A repair may change routing/dependencies, never the user's assigned goal or constraints.
+                    for key in ("action", "scope", "constraints"):
+                        t[key] = state["tasks"][t["task_id"]][key]
+                settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
+                retained = {i: a for i, a in state["action_graph"].items()
+                            if a["task"]["task_id"] not in ids or a["status"] == "success"}
+                for t in queue:
+                    t["generation"] = state["tasks"].get(t["task_id"], {}).get("generation", 0) + 1
+                return Command(update={"tasks": {**state["tasks"], **{t["task_id"]: t for t in queue}},
+                                       "action_graph": retained, "repair_context": {}, "settings": settings}, goto="plan_agents")
+        return Command(update={"task_queue": queue, "tasks": {t["task_id"]: t for t in queue},
+                               "final_response": result.get("response", "") if not queue else ""},
+                       goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
+    except (ValueError, KeyError, TypeError) as exc:
+        if not repair:
+            raise
+        error = f"PlannerRepairError: {exc}"
+        settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
+        if settings["replans"] < settings["max_replans"]:
+            return Command(update={"settings": settings, "repair_context": {**repair, "reason": error}},
+                           goto="task_planner")
+        tasks = deepcopy(state["tasks"])
+        for task_id in repair["task_ids"]:
+            tasks[task_id].update(status="failed", terminal=True, error=error)
+        return Command(update={"tasks": tasks, "settings": settings, "repair_context": {}}, goto="plan_agents")
+
 
 def _agent(state, agent):
     available = get_available_agents(state)
