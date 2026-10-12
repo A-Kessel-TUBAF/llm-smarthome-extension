@@ -125,8 +125,11 @@ def noSuchRoomBatch : Batch :=
   [{ device := "thermostat", op := "set_temperature",
       args := [("room", room "living_room"), ("celsius", .int 23)] }]
 
+-- Accepted batches
 #guard check cards state goodBatch
 #guard check cards state twoRoomsBatch
+
+-- Rejected batches
 #guard !check cards state conflictBatch
 #guard !check cards state tooHotBatch
 #guard !check cards state unknownDeviceBatch
