@@ -23,11 +23,28 @@ If you don't have Ollama installed:
    pip install -r requirements.txt
 ```
 
+### Using an online API instead of Ollama (optional)
+
+The model is chosen in `llm_config.py` via env vars (default: local `ollama:gemma2`).
+Copy `.env.example` to `.env` in this folder and set e.g.:
+```bash
+   LLM_MODEL=openai:gpt-4o-mini
+   OPENAI_API_KEY=sk-...
+```
+Any `provider:model` supported by LangChain's `init_chat_model` works 
+(`anthropic:...`, 
+`openai:...` + `OPENAI_BASE_URL` 
+for OpenAI-compatible services, ...).
+
 ## Running the System
 
 ### Interaction
 ```bash
    jupyter notebook smart_home_langgraph.ipynb
+```
+or 
+```bash
+   python smart_home_langgraph.py
 ```
 Type commands like "Set a 20-minute timer and dim the lights". 
 Type `quit` to exit.
@@ -139,7 +156,7 @@ To add a new device agent:
    builder.add_node("new_device_agent", new_device_agent)
 ```
 
-3. **Update task planner** to recognize new device type
+3. **Update agent registry** to recognize new device type
 
 ## Related Documentation
 

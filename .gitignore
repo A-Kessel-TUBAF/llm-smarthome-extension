@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 
+system_implementation/.env
+system_implementation/.env.example
+
+logs/
+
 .venv/
 venv/
 

@@ -8,3 +8,21 @@ langgraph==1.0.5
 
 # Ollama Integration
 langchain-ollama==1.0.1
+
+# Loads settings (LLM_MODEL, API keys) from .env, which llm_config.py
+# then uses to choose the model and connector via init_chat_model
+python-dotenv==1.2.4
+
+# Connectors to online LLM services. llm_config.py loads the one matching
+# LLM_MODEL (read from .env) via init_chat_model; the others stay unused.
+# Open AI and chatAI
+langchain-openai==1.1.6
+
+# Anthropic
+#langchain-anthropic==1.3.0
+
+# Operation contract validation
+jsonschema[format]>=4.23,<5
+
+# Time zone data on Windows
+tzdata; sys_platform == "win32"
