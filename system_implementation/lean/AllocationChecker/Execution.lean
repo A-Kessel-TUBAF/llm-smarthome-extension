@@ -179,16 +179,17 @@ theorem Undisturbed.symm {cat : Catalogue} {keys : Command → List StateKey} {a
   ⟨h.2, h.1⟩
 
 /-- If no command writes a key of another, each command starts with the initial values of its
-keys, whatever the order. -/
-theorem stable_of {cat : Catalogue} {run : Behaviour} (hr : Respects cat run)
+keys, whatever the order. Only the frame condition of the behaviour is needed. -/
+theorem stable_of {cat : Catalogue} {run : Behaviour}
+    (hf : ∀ c v k, k ∉ (footprint cat c).writes → run c v k = v k)
     {keys : Command → List StateKey} {v₀ : Valuation} : ∀ {cs : List Command} {v : Valuation},
     cs.Pairwise (Undisturbed cat keys) → (∀ c ∈ cs, ∀ k ∈ keys c, v k = v₀ k) →
       Stable run keys v₀ v cs
   | [], _, _, _ => trivial
   | c :: cs, v, hi, h => by
     rw [List.pairwise_cons] at hi
-    refine ⟨h c (by simp), stable_of hr hi.2 fun u hu k hk => ?_⟩
-    rw [hr.frame c v k (fun hw => (hi.1 u hu).1 k hw hk)]
+    refine ⟨h c (by simp), stable_of hf hi.2 fun u hu k hk => ?_⟩
+    rw [hf c v k (fun hw => (hi.1 u hu).1 k hw hk)]
     exact h u (by simp [hu]) k hk
 
 /-- Each command starts with the values of `v₀` on the keys it reads. -/
@@ -287,7 +288,7 @@ theorem admitted_reads_stable {s : Snapshot} {cat : Catalogue} {g : TaskGraph}
     {b : AllocationBatch} {run : Behaviour} (hv : AllocationValid s cat g b)
     (hr : Respects cat run) {order : List Command} (hp : order.Perm b.commands)
     (v : Valuation) : ReadsStable cat run v v order :=
-  stable_of hr (((pairwise_of_valid hv).perm hp.symm IndepCmd.symm).imp undisturbed_reads)
+  stable_of hr.frame (((pairwise_of_valid hv).perm hp.symm IndepCmd.symm).imp undisturbed_reads)
     fun _ _ _ _ => rfl
 
 /-- If the preconditions are on keys the commands read, no other command of an admitted batch
@@ -312,7 +313,8 @@ theorem admitted_preconditions_hold {s : Snapshot} {cat : Catalogue} {g : TaskGr
     (hr : Respects cat run) (hpu : PreconditionsUndisturbed cat g b.commands)
     {order : List Command} (hp : order.Perm b.commands) :
     PreconditionsAtStart cat g run s.valuation order :=
-  preconditionsAtStart_of (stable_of hr (hpu.perm hp.symm Undisturbed.symm) fun _ _ _ _ => rfl)
+  preconditionsAtStart_of (stable_of hr.frame (hpu.perm hp.symm Undisturbed.symm)
+    fun _ _ _ _ => rfl)
     (fun c hc => preconditions_of_valid hv c (hp.mem_iff.mp hc))
 
 end AllocationChecker

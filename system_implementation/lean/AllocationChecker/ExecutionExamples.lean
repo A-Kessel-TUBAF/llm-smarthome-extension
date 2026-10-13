@@ -3,7 +3,7 @@
   behaviour: a command sets every key it writes to its first argument. This shows that the
   assumption `Respects` is satisfiable, and how the theorems are used.
 -/
-import AllocationChecker.Failures
+import AllocationChecker.Repair
 import AllocationChecker.Examples
 
 namespace AllocationChecker.ExecutionExamples
@@ -50,5 +50,24 @@ theorem withDependent_dim_validated {order : List Command}
       cDim :=
   admitted_successful_validated withDependent_valid (setToFirstArg_respects cat) heatFails_act
     hp _ (by decide) (by decide)
+
+/-! ### Local repair over two rounds -/
+
+/-- The declared task dependencies of the example graph (the heating task 1 depends on the
+search task 0). -/
+def exDeps (t : Nat) : List Nat := ((lookupTask graph t).map (·.deps)).getD []
+
+/-- The search command of task 0. -/
+def cSearch : Command := cmd 0 dSearch 3 [8]
+
+/-- The volume change fails: only it has to be replanned; the heating in the next round still
+runs. -/
+example : (runPlan cat exDeps (· == cVol) (setToFirstArg cat) (RunState.start snap.valuation)
+    [[cDim, cVol], [cHeat]]).bad = [cVol.task] := by decide
+
+/-- The search fails: the heating depends on its answer and is skipped, the volume change in
+the same round still runs. -/
+example : (runPlan cat exDeps (· == cSearch) (setToFirstArg cat) (RunState.start snap.valuation)
+    [[cSearch, cDim], [cHeat, cVol]]).bad = [cSearch.task, cHeat.task] := by decide
 
 end AllocationChecker.ExecutionExamples
