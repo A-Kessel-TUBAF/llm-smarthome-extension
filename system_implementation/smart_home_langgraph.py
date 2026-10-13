@@ -951,7 +951,9 @@ def validate_plan(state):
         return Command(update={"tasks": tasks, "action_graph": retained}, goto="plan_agents")
 
 def check_allocation(state, batch):
-    """Vaibhav's unchanged checker over a finite registry projection; rich contracts stay in Python."""
+    """Vaibhav's unchanged checker over a finite registry projection; rich contracts stay in Python.
+    Arguments are sent as typed values (numbers, booleans, enum strings) together with their
+    declared types; the checker decodes them itself and rejects wrongly typed values."""
     if state["settings"]["checker"] != "lean":
         return
     registry, home = state["agent_registry"], state["home_state"]
@@ -976,11 +978,16 @@ def check_allocation(state, batch):
     ops, fields = [], {}
     for agent, skill in op_keys:
         d = registry[agent]["operations"][skill]
-        projected, bounds = [], []
+        projected, bounds, types = [], [], []
         for name, schema in d["parameters"].items():
-            if "enum" in schema:
-                projected.append((name, schema["enum"], 1))
+            if "enum" in schema and all(isinstance(v, str) for v in schema["enum"]):
+                projected.append(name)
                 bounds.append([0, len(schema["enum"]) - 1])
+                types.append({"enum": schema["enum"]})
+            elif schema.get("type") == "boolean":
+                projected.append(name)
+                bounds.append([0, 1])
+                types.append("bool")
             elif schema.get("type") in ("integer", "number") and "minimum" in schema and "maximum" in schema:
                 values = [schema["minimum"], schema["maximum"]] + [a["arguments"][name] for a in actions.values()
                     if (a["agent_id"], a["skill_id"]) == (agent, skill) and type(a["arguments"].get(name)) in (int, float)
@@ -988,8 +995,9 @@ def check_allocation(state, batch):
                 scale = math.lcm(*(Fraction(str(v)).denominator for v in values))
                 # Exact decimal scaling, never rounding; values outside the finite codec stay in Python.
                 if max(abs(Fraction(str(v)) * scale) for v in values) <= 10**9:
-                    projected.append((name, None, scale))
+                    projected.append(name)
                     bounds.append([int(Fraction(str(schema[k])) * scale) for k in ("minimum", "maximum")])
+                    types.append({"number": scale})
         fields[(agent, skill)] = projected
         pre, reads = [], set(d["reads"])
         for c in d["preconditions"]:
@@ -1000,7 +1008,7 @@ def check_allocation(state, batch):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "ge", -10**9])
             elif "equals" in c and type(c["equals"]) in (bool, int, str):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "eq", scalar(c["equals"])])
-        ops.append(dict(id=op_ids[(agent, skill)], cap=agents.index(agent), bounds=bounds,
+        ops.append(dict(id=op_ids[(agent, skill)], cap=agents.index(agent), bounds=bounds, types=types,
                         reads=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads}),
                         writes=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]}),
                         excl=[attr_ids["__target__"]], shared_reads=[], pre=pre,
@@ -1016,14 +1024,15 @@ def check_allocation(state, batch):
         args = a["arguments"]
         agent, skill = a["agent_id"], a["skill_id"]
         target = "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
-        vals = [(enum.index(args.get(name)) if args.get(name) in enum else -1) if enum else
-                int(Fraction(str(args.get(name, 0))) * scale) if type(args.get(name, 0)) in (int, float) and math.isfinite(args.get(name, 0)) else 0
-                for name, enum, scale in fields[(agent, skill)]]
+        # Typed values as they are; the checker decodes them with the declared types.
+        vals = [args.get(name) for name in fields[(agent, skill)]]
         ranks[aid] = 1 + max((ranks[d] for d in a["depends_on"]), default=-1)
         verified = a["status"] == "success" and a.get("verified", False)
         tasks.append(dict(id=task_ids[aid], status="pending" if aid in selected_ids else
                           "verified" if verified else "failed" if a["status"] in {"failed", "blocked"} else "pending",
-                          op=op_ids[(agent, skill)], device=dev_ids[target], args=[{"lit": v} for v in vals],
+                          op=op_ids[(agent, skill)], device=dev_ids[target],
+                          # Only the batch's tasks need their arguments (for the contract check).
+                          args=[{"lit": v} for v in vals] if aid in selected_ids else [],
                           deps=[task_ids[d] for d in a["depends_on"]], rank=ranks[aid], pre=[], deadline=10**12))
         if verified:
             evidence.append(dict(task=task_ids[aid], verified=True, valid_until=int(a["valid_until"]), output=None,
@@ -1045,7 +1054,10 @@ def check_allocation(state, batch):
     result = subprocess.run([state["settings"]["lean_executable"], "--oneshot"], input=json.dumps(payload) + "\n",
                             capture_output=True, text=True, timeout=15, check=True)
     response = json.loads(result.stdout)
-    if response.get("request_id") != payload["request_id"] or response.get("commands") != commands or response.get("verdict") != "accept":
+    # The checker echoes the commands with their decoded (integer) arguments.
+    shape = lambda cs: [(c["task"], c["device"], c["op"], len(c["args"])) for c in cs]
+    if (response.get("request_id") != payload["request_id"] or shape(response.get("commands", [])) != shape(commands)
+            or response.get("verdict") != "accept"):
         raise ValueError(f"Lean allocation checker rejected the batch: {response.get('diagnostics', response.get('error'))}")
     for action in batch:
         action["dispatch_until"] = min(action["dispatch_until"], time.monotonic() + max(0, response["expires_at"] - payload["snapshot"]["now"]))
