@@ -7,4 +7,5 @@ import AllocationChecker.Examples
 import AllocationChecker.Execution
 import AllocationChecker.Failures
 import AllocationChecker.Repair
+import AllocationChecker.Invariants
 import AllocationChecker.ExecutionExamples

@@ -66,6 +66,8 @@ end AllocationChecker.Audit
   AllocationChecker.admitted_successful_validated
   AllocationChecker.repair_sound
   AllocationChecker.repair_no_failures
+  AllocationChecker.reachable_within
+  AllocationChecker.ExecutionExamples.home_within
   AllocationChecker.ExecutionExamples.withDependent_order_irrelevant
   AllocationChecker.ExecutionExamples.withDependent_preconditions_hold
   AllocationChecker.ExecutionExamples.withDependent_dim_validated
