@@ -561,7 +561,8 @@ def task_planner(state):
     available = get_available_agents(state)
     graph_mode = state["settings"]["dependency_graph"]
     graph_instruction = (' Give each task a unique task_id (e.g. t1), scope (room/device IDs), constraints '
-                         '(conditions, timing, quantities, negation), and depends_on list of task IDs. '
+                         '(conditions, timing, quantities, negation), and depends_on list of task-ID strings. '
+                         'Example: depends_on=["t1", "t2"]. Never put objects or dictionaries in depends_on. '
                          'Independent goals have depends_on=[]. A task that needs earlier effects/information '
                          'depends on that predecessor. Combine related goals on the same target or order them. '
                          if graph_mode else '')
@@ -617,8 +618,10 @@ def task_planner(state):
         if graph_mode:
             ids = {t["task_id"] for t in queue}
             allowed = ids | (state["tasks"].keys() if repair else set())
-            if len(ids) != len(queue) or any(not isinstance(t["depends_on"], list) or set(t["depends_on"]) - allowed for t in queue):
-                raise ValueError("PlanError: doppelte Task-ID oder unbekannte Vorgaenger.")
+            if len(ids) != len(queue) or any(not isinstance(t["depends_on"], list)
+                    or any(not isinstance(d, str) for d in t["depends_on"])
+                    or set(t["depends_on"]) - allowed for t in queue):
+                raise ValueError("PlanError: doppelte Task-ID; depends_on muss eine Liste bekannter Task-ID-Strings sein.")
             merged = {**state["tasks"], **{t["task_id"]: t for t in queue}} if repair else {t["task_id"]: t for t in queue}
             tuple(TopologicalSorter({t["task_id"]: t["depends_on"] for t in merged.values()}).static_order())
             if repair:
