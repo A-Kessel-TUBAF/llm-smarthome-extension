@@ -7,6 +7,7 @@
    or:  lake env lean AllocationChecker/Audit.lean
 -/
 import AllocationChecker
+import AllocationChecker.TypedValues
 import Lean
 
 open Lean Elab Command
@@ -54,3 +55,6 @@ end AllocationChecker.Audit
   AllocationChecker.Examples.duplicate_rejected
   AllocationChecker.Examples.staleRevision_rejected
   AllocationChecker.Examples.wrongDevice_rejected
+  AllocationChecker.TypedValues.decodeTyped_iff
+  AllocationChecker.TypedValues.decodeTyped_wrong_type
+  AllocationChecker.TypedValues.decodeTypedArgs_iff
