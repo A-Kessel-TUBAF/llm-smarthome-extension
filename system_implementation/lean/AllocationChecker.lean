@@ -4,3 +4,5 @@ import AllocationChecker.Check
 import AllocationChecker.Soundness
 import AllocationChecker.Completeness
 import AllocationChecker.Examples
+import AllocationChecker.Execution
+import AllocationChecker.ExecutionExamples

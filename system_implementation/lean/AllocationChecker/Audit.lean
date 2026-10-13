@@ -58,3 +58,8 @@ end AllocationChecker.Audit
   AllocationChecker.TypedValues.decodeTyped_iff
   AllocationChecker.TypedValues.decodeTyped_wrong_type
   AllocationChecker.TypedValues.decodeTypedArgs_iff
+  AllocationChecker.admitted_order_irrelevant
+  AllocationChecker.admitted_reads_stable
+  AllocationChecker.admitted_preconditions_hold
+  AllocationChecker.ExecutionExamples.withDependent_order_irrelevant
+  AllocationChecker.ExecutionExamples.withDependent_preconditions_hold
