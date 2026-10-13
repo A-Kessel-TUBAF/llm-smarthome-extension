@@ -667,6 +667,11 @@ def intent_analysis(state):
                   user_message=state["original_user_input"])
     return Command(update={"infos": result["infos"], "key_modifiers": result.get("key_modifiers", [])}, goto="task_planner")
 
+def _scope_ids(scope):
+    """Room/device IDs of a planner scope; models also write {"room_id": ..., "device_id": ...} or one ID."""
+    values = scope.values() if isinstance(scope, dict) else scope if isinstance(scope, list) else [scope]
+    return [i for v in values for i in (v if isinstance(v, list) else [v]) if isinstance(i, str) and i]
+
 def task_planner(state):
     repair = state["repair_context"]
     if state["task_queue"] and not repair:
@@ -681,7 +686,8 @@ def task_planner(state):
         return Command(goto="finish")
     available = get_available_agents(state)
     graph_mode = state["settings"]["dependency_graph"]
-    graph_instruction = (' Give each task a unique task_id (e.g. t1), scope (room/device IDs), constraints '
+    graph_instruction = (' Give each task a unique task_id (e.g. t1), scope (list of room/device ID strings, '
+                         'e.g. scope=["living_room"]; never an object), constraints '
                          '(conditions, timing, quantities, negation), and depends_on list of task-ID strings. '
                          'Example: depends_on=["t1", "t2"]. Never put objects or dictionaries in depends_on. '
                          'Independent goals have depends_on=[]. A task that needs earlier effects/information '
@@ -738,7 +744,7 @@ def task_planner(state):
             task_id = raw.get("task_id", f"t{index + 1}") if graph_mode else f"{state['request_id']}:{index}"
             queue.append(dict(task_id=task_id, agent_id=raw["agent_id"], action=raw["action"],
                               depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
-                              scope=raw.get("scope", []), constraints=raw.get("constraints", [])))
+                              scope=_scope_ids(raw.get("scope", [])), constraints=raw.get("constraints", [])))
             if raw.get("actions"):
                 queue[-1]["actions"] = raw["actions"]
             queue[-1]["goal"] = (deepcopy(state["tasks"][task_id]["goal"])
