@@ -180,4 +180,37 @@ theorem staleRevision_rejected :
 theorem wrongDevice_rejected :
     checkAllocation snap cat graph (batch [cmd 2 dThermo 0 [30]]) = false := by decide
 
+/-! ### Preconditions stay true while the batch runs -/
+
+/-- Task 7 sets the living-room volume only while the bedroom light is bright
+    (brightness at least 50; it is 70). -/
+def preGraph : TaskGraph :=
+  { graph with
+    tasks := graph.tasks ++
+      [{ mkTask 7 .pending 2 dAudio [.lit 20] [] 0 with
+          pre := [⟨⟨dLight, aBrightness⟩, .ge, 50⟩] }] }
+
+def cQuietIfBright : Command := cmd 7 dAudio 2 [20]
+
+theorem preAlone_accepted :
+    checkAllocation snap cat preGraph (batch [cQuietIfBright]) = true := by decide
+
+/-- Dimming the light to 30 in the same batch could break task 7's precondition before its
+    command starts. -/
+theorem preDisturbed_rejected :
+    checkAllocation snap cat preGraph (batch [cDim, cQuietIfBright]) = false := by decide
+theorem preDisturbed_invalid : ¬ AllocationValid snap cat preGraph (batch [cDim, cQuietIfBright]) :=
+  not_valid_of_rejected preDisturbed_rejected
+
+/-- The same with a running operation that writes the light's brightness. -/
+theorem preRunning_rejected :
+    checkAllocation busyLight cat preGraph (batch [cQuietIfBright]) = false := by decide
+
+/-- An operation precondition: the volume operation requires the speaker to be online, and a
+    running operation may change that. -/
+def restartingSpeaker : Snapshot :=
+  mkSnap 100 4 1500 5 [{ reads := [], writes := [⟨dAudio, aOnline⟩], excl := [] }]
+theorem opPreRunning_rejected :
+    checkAllocation restartingSpeaker cat graph (batch [cVol]) = false := by decide
+
 end AllocationChecker.Examples

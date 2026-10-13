@@ -19,10 +19,6 @@ theorem setToFirstArg_respects (cat : Catalogue) : Respects cat (setToFirstArg c
   frame _ _ _ hk := by simp [setToFirstArg, hk]
   onlyReads _ _ _ _ _ hk := by simp [setToFirstArg, hk]
 
-/-- No command of the example batch writes a key another one's preconditions are about. -/
-theorem withDependent_undisturbed :
-    PreconditionsUndisturbed cat graph withDependent.commands := by decide
-
 /-- Dimming the light, setting the volume and heating give the same result in every order. -/
 theorem withDependent_order_irrelevant {order : List Command}
     (hp : order.Perm withDependent.commands) :
@@ -34,8 +30,7 @@ theorem withDependent_order_irrelevant {order : List Command}
 theorem withDependent_preconditions_hold {order : List Command}
     (hp : order.Perm withDependent.commands) :
     PreconditionsAtStart cat graph (setToFirstArg cat) snap.valuation order :=
-  admitted_preconditions_hold withDependent_valid (setToFirstArg_respects cat)
-    withDependent_undisturbed hp
+  admitted_preconditions_hold withDependent_valid (setToFirstArg_respects cat) hp
 
 /-- The heating command fails and does nothing; the others behave as `setToFirstArg`. -/
 def heatFails : Behaviour := fun c v => if c = cHeat then v else setToFirstArg cat c v

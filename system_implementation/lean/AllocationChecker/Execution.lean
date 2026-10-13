@@ -17,9 +17,8 @@
     that of running all commands at once (`runPar`);
   * `admitted_reads_stable`: in every order, each command starts with the initial values of the
     keys it reads;
-  * `admitted_preconditions_hold`: if no command writes a key another command's preconditions
-    are about (`PreconditionsUndisturbed`, decidable; it follows from preconditions on read keys),
-    every command's preconditions still hold when it starts.
+  * `admitted_preconditions_hold`: in every order, each command's preconditions still hold
+    when it starts (the specification lets no other command write a key they are about).
 
   These are Bernstein's conditions for parallel execution, proved for the checker's
   independence relation `Indep`. This module imports only `Init` (through the checker).
@@ -220,19 +219,6 @@ def preKeys (cat : Catalogue) (g : TaskGraph) (c : Command) : List StateKey :=
 def PreconditionsUndisturbed (cat : Catalogue) (g : TaskGraph) (cs : List Command) : Prop :=
   cs.Pairwise (Undisturbed cat (preKeys cat g))
 
-/-- Every precondition of the commands is on a key the command reads. This is a simple way to
-satisfy `PreconditionsUndisturbed` (`preconditionsUndisturbed_of_read`). -/
-def PreconditionsRead (cat : Catalogue) (g : TaskGraph) (cs : List Command) : Prop :=
-  ∀ c ∈ cs, ∀ p ∈ preconditions cat g c, p.key ∈ (footprint cat c).reads
-
-instance (cat : Catalogue) (g : TaskGraph) (cs : List Command) :
-    Decidable (PreconditionsUndisturbed cat g cs) := by
-  unfold PreconditionsUndisturbed Undisturbed KeysDisjoint; infer_instance
-
-instance (cat : Catalogue) (g : TaskGraph) (cs : List Command) :
-    Decidable (PreconditionsRead cat g cs) := by
-  unfold PreconditionsRead; infer_instance
-
 /-- Running the commands in list order, each one's preconditions hold when it starts. -/
 def PreconditionsAtStart (cat : Catalogue) (g : TaskGraph) (run : Behaviour) :
     Valuation → List Command → Prop
@@ -291,30 +277,47 @@ theorem admitted_reads_stable {s : Snapshot} {cat : Catalogue} {g : TaskGraph}
   stable_of hr.frame (((pairwise_of_valid hv).perm hp.symm IndepCmd.symm).imp undisturbed_reads)
     fun _ _ _ _ => rfl
 
-/-- If the preconditions are on keys the commands read, no other command of an admitted batch
-writes them. -/
-theorem preconditionsUndisturbed_of_read {s : Snapshot} {cat : Catalogue} {g : TaskGraph}
-    {b : AllocationBatch} (hv : AllocationValid s cat g b)
-    (hpr : PreconditionsRead cat g b.commands) : PreconditionsUndisturbed cat g b.commands := by
-  refine (pairwise_of_valid hv).imp_of_mem fun {a c} ha hc h => ⟨?_, ?_⟩
-  · intro k hk hk'
-    obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hk'
-    exact h.1 p.key hk (List.mem_append_left _ (hpr c hc p hp))
-  · intro k hk hk'
-    obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hk'
-    exact h.2.1 p.key hk (hpr a ha p hp)
+/-- A precondition key of a command of an admitted batch is a key of its task preconditions or
+a key it reads (operation preconditions are reads of the footprint). -/
+theorem preKey_cases {s : Snapshot} {cat : Catalogue} {g : TaskGraph} {b : AllocationBatch}
+    (hv : AllocationValid s cat g b) {c : Command} (hc : c ∈ b.commands) {k : StateKey}
+    (hk : k ∈ preKeys cat g c) :
+    (∃ t, TaskOf g c.task t ∧ k ∈ t.pre.map (·.key)) ∨ k ∈ (footprint cat c).reads := by
+  obtain ⟨t, o, _, ht, ho, _, _⟩ := hv.commands c hc
+  have hl := lookupOp_complete hv.catalogueWF ho
+  simp only [preKeys, preconditions, lookupTask_complete hv.graphWF ht, hl, List.map_append,
+    List.mem_append, List.map_map] at hk
+  rcases hk with hk | hk
+  · exact .inl ⟨t, ht, hk⟩
+  · obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hk
+    right
+    simp only [footprint, cmdFootprint?, hl, Option.map_some, Option.getD_some, opFootprint,
+      List.mem_append]
+    exact .inl (.inl (.inr (List.mem_map_of_mem (f := fun p : AttrPre => (⟨c.device, p.attr⟩ :
+      StateKey)) hp)))
 
-/-- **Preconditions still hold when each command starts.** If no command of an admitted batch
-writes a key another command's preconditions are about (decidable; e.g. when preconditions are
-on read keys, `preconditionsUndisturbed_of_read`), then in every execution order each command's
-preconditions hold when it starts. -/
+/-- In an admitted batch, no command writes a key another command's preconditions are about. -/
+theorem preconditionsUndisturbed_of_valid {s : Snapshot} {cat : Catalogue} {g : TaskGraph}
+    {b : AllocationBatch} (hv : AllocationValid s cat g b) :
+    PreconditionsUndisturbed cat g b.commands := by
+  have hkeys : ∀ {a c}, a ∈ b.commands → c ∈ b.commands → KeepsTaskPre cat g a c →
+      IndepCmd cat a c → KeysDisjoint (footprint cat a).writes (preKeys cat g c) := by
+    intro a c ha hc hkeep hind k hw hk
+    rcases preKey_cases hv hc hk with ⟨t, ht, hkt⟩ | hr
+    · exact hkeep _ t (footprint_of_valid hv ha) ht k hw hkt
+    · exact hind.1 k hw (List.mem_append_left _ hr)
+  exact (hv.taskPreStable.1.and (pairwise_of_valid hv)).imp_of_mem fun ha hc h =>
+    ⟨hkeys ha hc h.1.1 h.2, hkeys hc ha h.1.2 h.2.symm⟩
+
+/-- **Preconditions still hold when each command starts.** In every execution order of an
+admitted batch, each command's preconditions hold when it starts. -/
 theorem admitted_preconditions_hold {s : Snapshot} {cat : Catalogue} {g : TaskGraph}
     {b : AllocationBatch} {run : Behaviour} (hv : AllocationValid s cat g b)
-    (hr : Respects cat run) (hpu : PreconditionsUndisturbed cat g b.commands)
-    {order : List Command} (hp : order.Perm b.commands) :
+    (hr : Respects cat run) {order : List Command} (hp : order.Perm b.commands) :
     PreconditionsAtStart cat g run s.valuation order :=
-  preconditionsAtStart_of (stable_of hr.frame (hpu.perm hp.symm Undisturbed.symm)
-    fun _ _ _ _ => rfl)
+  preconditionsAtStart_of
+    (stable_of hr.frame ((preconditionsUndisturbed_of_valid hv).perm hp.symm Undisturbed.symm)
+      fun _ _ _ _ => rfl)
     (fun c hc => preconditions_of_valid hv c (hp.mem_iff.mp hc))
 
 end AllocationChecker

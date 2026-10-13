@@ -398,9 +398,15 @@ def diagnose (s : Snapshot) (cat : Catalogue) (g : TaskGraph) (b : AllocationBat
         if d?.isNone then out := out.push { code := "unknown_device", cmd := some i, task := some c.task }
       unless activeIndepB cat s c do
         out := out.push { code := "conflicts_with_running_operation", cmd := some i, task := some c.task }
+      unless s.active.all (fun f => disjointB f.writes (taskPreKeys g c)) do
+        out := out.push { code := "task_precondition_conflicts_with_running_operation",
+                          cmd := some i, task := some c.task }
       for h2 : j in [i+1:cs.size] do
         unless pairIndepB cat c cs[j] do
           out := out.push { code := "resource_conflict", cmd := some i, other := some j, task := some c.task }
+        unless keepsTaskPreB cat g c cs[j] && keepsTaskPreB cat g cs[j] c do
+          out := out.push { code := "task_precondition_conflict", cmd := some i, other := some j,
+                            task := some c.task }
     pure out.toList
 
 /-! ### Authorization bindings for accepted batches -/

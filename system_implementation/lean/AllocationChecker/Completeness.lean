@@ -156,6 +156,30 @@ theorem checkIndependence_complete {cat : Catalogue} {s : Snapshot} {g : TaskGra
     rw [hfc, List.all_eq_true]
     exact fun f hf => indepB_complete (ha c hcs fc hfc' f hf)
 
+theorem checkTaskPreStable_complete {cat : Catalogue} {s : Snapshot} {g : TaskGraph}
+    {cs : List Command} (hc : CatalogueWF cat) (hg : GraphWF g)
+    (hv : ∀ c ∈ cs, CommandValid cat s g c) (h : TaskPreStable cat s g cs) :
+    checkTaskPreStable cat s g cs = true := by
+  obtain ⟨hp, ha⟩ := h
+  have hkeys : ∀ c ∈ cs, ∃ t, TaskOf g c.task t ∧ taskPreKeys g c = t.pre.map (·.key) := by
+    intro c hcs
+    obtain ⟨t, _, _, ht, _⟩ := hv c hcs
+    exact ⟨t, ht, taskPreKeys_eq hg ht⟩
+  have hkeeps : ∀ {a b}, a ∈ cs → b ∈ cs → KeepsTaskPre cat g a b →
+      keepsTaskPreB cat g a b = true := by
+    intro a b ha' hb hab
+    obtain ⟨fa, hfa, hfa'⟩ := cmdFootprint_of_valid hc (hv a ha')
+    obtain ⟨t, ht, hk⟩ := hkeys b hb
+    unfold keepsTaskPreB
+    rw [hfa, hk]
+    exact disjointB_complete (hab fa t hfa' ht)
+  simp only [checkTaskPreStable, Bool.and_eq_true, pairwiseB_iff, List.all_eq_true]
+  refine ⟨hp.imp_of_mem fun ha' hb hab => ⟨hkeeps ha' hb hab.1, hkeeps hb ha' hab.2⟩,
+    fun c hcs f hf => ?_⟩
+  obtain ⟨t, ht, hk⟩ := hkeys c hcs
+  rw [hk]
+  exact disjointB_complete (ha c hcs t ht f hf)
+
 theorem checkCatalogueWF_complete {cat : Catalogue} (h : CatalogueWF cat) :
     checkCatalogueWF cat = true := by
   simp only [checkCatalogueWF, Bool.and_eq_true, nodupB_iff]
@@ -185,7 +209,8 @@ theorem checkAllocation_complete
     checkGraphWF_complete hv.graphWF, hv.graphRev, hv.catalogueRev, hv.workerCap,
     nodupB_iff.mpr hv.uniqueTasks,
     fun c hc => checkCommand_complete hv.catalogueWF hv.snapshotWF hv.graphWF (hv.commands c hc),
-    checkIndependence_complete hv.catalogueWF hv.commands hv.independent⟩
+    checkIndependence_complete hv.catalogueWF hv.commands hv.independent,
+    checkTaskPreStable_complete hv.catalogueWF hv.graphWF hv.commands hv.taskPreStable⟩
 
 /-- The checker decides the restricted specification exactly. -/
 theorem checkAllocation_iff (snapshot : Snapshot) (catalogue : Catalogue) (graph : TaskGraph)

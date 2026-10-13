@@ -173,14 +173,15 @@ structure AllocationBatch where
   deriving Repr
 
 /-- Footprint of an operation on a concrete target device, derived only from
-    the trusted catalogue. Operations coupled by the household load policy also
-    read and write the meter key and the device's load attribute, which
-    serialises them conservatively. -/
+    the trusted catalogue. The attributes its preconditions are about count as
+    reads, so that no parallel or running operation may change them. Operations
+    coupled by the household load policy also read and write the meter key and
+    the device's load attribute, which serialises them conservatively. -/
 def opFootprint (cat : Catalogue) (o : OpSpec) (dev : Nat) : Footprint :=
   let onDev := fun (a : Nat) => ({ dev := dev, attr := a } : StateKey)
   let policy : List StateKey :=
     if o.coupled then [cat.meterKey, { dev := dev, attr := cat.loadAttr }] else []
-  { reads  := o.reads.map onDev ++ o.sharedReads ++ policy
+  { reads  := o.reads.map onDev ++ o.pre.map (fun p => onDev p.attr) ++ o.sharedReads ++ policy
     writes := o.writes.map onDev ++ policy
     excl   := o.excl.map onDev }
 
