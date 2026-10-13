@@ -61,5 +61,9 @@ end AllocationChecker.Audit
   AllocationChecker.admitted_order_irrelevant
   AllocationChecker.admitted_reads_stable
   AllocationChecker.admitted_preconditions_hold
+  AllocationChecker.admitted_failures_isolated
+  AllocationChecker.validated_iff_predicted
+  AllocationChecker.admitted_successful_validated
   AllocationChecker.ExecutionExamples.withDependent_order_irrelevant
   AllocationChecker.ExecutionExamples.withDependent_preconditions_hold
+  AllocationChecker.ExecutionExamples.withDependent_dim_validated

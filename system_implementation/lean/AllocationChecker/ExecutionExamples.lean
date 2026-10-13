@@ -3,7 +3,7 @@
   behaviour: a command sets every key it writes to its first argument. This shows that the
   assumption `Respects` is satisfiable, and how the theorems are used.
 -/
-import AllocationChecker.Execution
+import AllocationChecker.Failures
 import AllocationChecker.Examples
 
 namespace AllocationChecker.ExecutionExamples
@@ -35,5 +35,20 @@ theorem withDependent_preconditions_hold {order : List Command}
     PreconditionsAtStart cat graph (setToFirstArg cat) snap.valuation order :=
   admitted_preconditions_hold withDependent_valid (setToFirstArg_respects cat)
     withDependent_undisturbed hp
+
+/-- The heating command fails and does nothing; the others behave as `setToFirstArg`. -/
+def heatFails : Behaviour := fun c v => if c = cHeat then v else setToFirstArg cat c v
+
+theorem heatFails_act : Act cat (setToFirstArg cat) (· = cHeat) heatFails where
+  frame c v k hk := by unfold heatFails; split <;> simp [setToFirstArg, hk]
+  ok c hc := by funext v; simp [heatFails, hc]
+
+/-- Even though heating fails, dimming passes observed-state validation, in every order. -/
+theorem withDependent_dim_validated {order : List Command}
+    (hp : order.Perm withDependent.commands) :
+    Validated cat (setToFirstArg cat) snap.valuation (runSeq heatFails snap.valuation order)
+      cDim :=
+  admitted_successful_validated withDependent_valid (setToFirstArg_respects cat) heatFails_act
+    hp _ (by decide) (by decide)
 
 end AllocationChecker.ExecutionExamples
