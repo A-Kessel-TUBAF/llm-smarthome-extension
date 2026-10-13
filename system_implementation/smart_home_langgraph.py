@@ -582,7 +582,9 @@ def task_planner(state):
         result = _ask('You are the central task planner. Plan the ENTIRE original_input, not only its first clause. '
                       'Create one high-level task per distinct requested goal, assigned to its primary domain agent. '
                       'AND or THEN may join multiple goals; preserve THEN ordering and ALL conditions, timing and locations. '
-                      'Use available agent IDs; audio_system handles music/playback. '
+                      f'Allowed agent_id values: {json.dumps(list(available))}. '
+                      'Use these exact IDs, never node names such as audio_system_agent or invented aliases. '
+                      'audio_system handles music/playback. '
                       'For a fully specified goal with known devices, skills and arguments, add actions to the task. '
                       'These actions go directly to Python/Lean checking without a domain-agent model call. '
                       'Include all prerequisites and local action dependencies, e.g. turn_on a1 before dim a2. '
@@ -603,7 +605,8 @@ def task_planner(state):
             if not isinstance(raw, dict) or not isinstance(raw.get("action"), str) or not raw["action"].strip():
                 raise ValueError("Planner-Auftrag braucht agent_id und eine nicht leere action.")
             if raw.get("agent_id") not in available:
-                raise ValueError("Plan enthaelt einen nicht verfuegbaren Agent.")
+                raise ValueError(f"PlanError: agent_id={raw.get('agent_id')!r} is unavailable; "
+                                 f"allowed IDs: {list(available)}.")
             task_id = raw.get("task_id", f"t{index + 1}") if graph_mode else f"{state['request_id']}:{index}"
             queue.append(dict(task_id=task_id, agent_id=raw["agent_id"], action=raw["action"],
                               depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
@@ -645,7 +648,8 @@ def task_planner(state):
                        goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
     except (ValueError, KeyError, TypeError) as exc:
         if not repair:
-            raise
+            return Command(update={"final_response": json.dumps(
+                {"status": "failed", "error": f"PlannerError: {exc}"}, ensure_ascii=False)}, goto="finish")
         error = f"PlannerRepairError: {exc}"
         settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
         if settings["replans"] < settings["max_replans"]:
