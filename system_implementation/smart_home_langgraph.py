@@ -668,9 +668,10 @@ def intent_analysis(state):
     return Command(update={"infos": result["infos"], "key_modifiers": result.get("key_modifiers", [])}, goto="task_planner")
 
 def _scope_ids(scope):
-    """Room/device IDs of a planner scope; models also write {"room_id": ..., "device_id": ...} or one ID."""
-    values = scope.values() if isinstance(scope, dict) else scope if isinstance(scope, list) else [scope]
-    return [i for v in values for i in (v if isinstance(v, list) else [v]) if isinstance(i, str) and i]
+    """Room/device IDs of a planner scope; models also write {"room_id": ..., "device_id": ...}, one ID or nested lists."""
+    values = list(scope.values()) if isinstance(scope, dict) else scope if isinstance(scope, list) else [scope]
+    return [i for v in values for i in (_scope_ids(v) if isinstance(v, (dict, list)) else [v])
+            if isinstance(i, str) and i]
 
 def task_planner(state):
     repair = state["repair_context"]
