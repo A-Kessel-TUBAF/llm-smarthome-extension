@@ -27,6 +27,7 @@ from agent_registry import AGENT_REGISTRY
 from home_defaults import HOME_DEFAULTS, SEARCH_FIXTURES
 
 llm = None  # Created on the first model call; importing the module does not need a server.
+SCHEDULER_MODE = os.getenv("SCHEDULER_MODE", "python")  # Central ablation switch, also read from .env.
 
 # Live objects stay outside LangGraph checkpoints: workers share one simulator per request.
 SIMULATORS = {}
@@ -140,7 +141,11 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
                          include_conditions=True, simulation_data=None, validate_contracts=True,
                           dependency_graph=True, parallel_agents=True, parallel_actions=True,
                           intent_analysis_enabled=False, check_outcomes=True, max_repairs=1,
-                          max_replans=1, max_workers=4, checker="python", lean_executable=None, search_mode="fixtures"):
+                          max_replans=1, max_workers=4, checker="python", lean_executable=None,
+                          search_mode="fixtures", scheduler_mode=None):
+    scheduler_mode = scheduler_mode or SCHEDULER_MODE
+    if scheduler_mode not in {"python", "llm"}:
+        raise ValueError("SCHEDULER_MODE must be python or llm.")
     if search_mode not in {"fixtures", "live"}:
         raise ValueError("search_mode must be fixtures or live.")
     simulation_data = deepcopy(simulation_data or {})
@@ -179,7 +184,7 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
                 task_history=[], final_response="", repair_context={}, simulation_data=deepcopy(simulation_data or {}),
                 settings={"version": "V3" if dependency_graph else "V2" if validate_contracts else "V1",
                             "dependency_graph": dependency_graph, "parallel_agents": parallel_agents,
-                            "parallel_actions": parallel_actions,
+                            "parallel_actions": parallel_actions, "scheduler_mode": scheduler_mode,
                              "intent_analysis_enabled": intent_analysis_enabled, "check_outcomes": check_outcomes,
                              "max_repairs": max_repairs, "max_replans": max_replans, "replans": 0,
                              "max_workers": max_workers, "checker": checker, "lean_executable": lean_executable,
@@ -1209,14 +1214,30 @@ def scheduler(state):
                 changed = True
     if blocked:
         return Command(update={"action_graph": graph, "task_results": blocked, "active_actions": []}, goto="complete_round")
+    limit = state["settings"]["max_workers"] if state["settings"]["parallel_actions"] else 1
+    ready = [a for a in graph.values() if a["status"] == "pending"
+             and all(graph[d]["status"] == "success" for d in a["depends_on"])]
+    llm_scheduler = state["settings"]["scheduler_mode"] == "llm"
+    if llm_scheduler and ready:
+        ids = _ask('You schedule the next execution batch. Select 1..max_actions unique action IDs from actions. '
+                   'Choose useful parallel work: no shared target and no write/write or read/write conflicts. '
+                   'Keep agents and arguments unchanged. Output only {"action_ids": ["t1/a1"]}.',
+                   expected={"action_ids": list}, role="scheduler", original_input=state["original_user_input"],
+                   max_actions=limit, actions=[{"action_id": a["task_id"], "agent_id": a["agent_id"],
+                       "goal": a["task"]["action"], "skill_id": a["skill_id"], "arguments": a["arguments"],
+                       "reads": a["footprint"][0], "writes": a["footprint"][1], "target": a["footprint"][2]}
+                       for a in ready])["action_ids"]
+        if not ids or len(ids) > limit or len(set(ids)) != len(ids) or set(ids) - {a["task_id"] for a in ready}:
+            raise ValueError("SchedulerError: choose a nonempty batch of unique ready action IDs within max_actions.")
+        ready = [graph[i] for i in ids]
     selected, rejected, targets, round_reads, round_writes = [], [], set(), set(), set()
-    for action in graph.values():
-        if action["status"] != "pending" or not all(graph[d]["status"] == "success" for d in action["depends_on"]):
-            continue
+    for action in ready:
         args = action["arguments"]
         target = ("device", args["device_id"]) if "device_id" in args else ("service", args["service_id"])
         reads, writes, _ = action_footprint(state, action)
         if target in targets or writes & (round_reads | round_writes) or reads & round_writes:
+            if llm_scheduler:
+                raise ValueError("SchedulerError: proposed actions conflict within the batch.")
             continue  # conservative: one simultaneous action per device/service
         checked = validate_action({**state, "pending_actions": [action]})
         if checked.goto != "execute_action":
@@ -1230,7 +1251,7 @@ def scheduler(state):
         round_writes.update(writes)
         action["status"] = "running"
         selected.append(action)
-        if not state["settings"]["parallel_actions"] or len(selected) >= state["settings"]["max_workers"]:
+        if len(selected) >= limit:
             break
     try:
         if selected:
@@ -1383,11 +1404,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--intent-analysis", action="store_true", help="Enable the optional intent analyser")
     parser.add_argument("--search-mode", choices=("fixtures", "live"), default="fixtures")
+    parser.add_argument("--scheduler", choices=("python", "llm"), default=SCHEDULER_MODE)
     parser.add_argument("--checker", choices=("python", "lean"), default="python")
     parser.add_argument("--sequential", action="store_true", help="Disable agent/action parallelism")
     parser.add_argument("--no-operations", action="store_true", help="Omit operation definitions from LLM prompts (ablation)")
     parser.add_argument("--no-conditions", action="store_true", help="Omit operation conditions from LLM prompts (ablation)")
     args = parser.parse_args()
-    interactive(intent_analysis_enabled=args.intent_analysis, checker=args.checker, search_mode=args.search_mode,
+    interactive(intent_analysis_enabled=args.intent_analysis, checker=args.checker,
+                search_mode=args.search_mode, scheduler_mode=args.scheduler,
                 parallel_agents=not args.sequential, parallel_actions=not args.sequential,
                 include_operations=not args.no_operations, include_conditions=not args.no_conditions)
