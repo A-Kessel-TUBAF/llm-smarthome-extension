@@ -128,6 +128,19 @@ def ResourceIndependent (cat : Catalogue) (s : Snapshot) (cs : List Command) : P
   cs.Pairwise (fun a b => ∀ fa fb, CmdFootprint cat a fa → CmdFootprint cat b fb → Indep fa fb) ∧
   ∀ c ∈ cs, ∀ fc, CmdFootprint cat c fc → ∀ f ∈ s.active, Indep fc f
 
+/-! ### Stable preconditions -/
+
+/-- Command `a` writes no key that a task precondition of command `b` is about. -/
+def KeepsTaskPre (cat : Catalogue) (g : TaskGraph) (a b : Command) : Prop :=
+  ∀ fa t, CmdFootprint cat a fa → TaskOf g b.task t → KeysDisjoint fa.writes (t.pre.map (·.key))
+
+/-- The task preconditions stay true while the batch runs: no other command of the batch and
+    no running operation writes a key they are about. Operation preconditions are reads of the
+    footprint (`opFootprint`), so `ResourceIndependent` already protects them. -/
+def TaskPreStable (cat : Catalogue) (s : Snapshot) (g : TaskGraph) (cs : List Command) : Prop :=
+  cs.Pairwise (fun a b => KeepsTaskPre cat g a b ∧ KeepsTaskPre cat g b a) ∧
+  ∀ c ∈ cs, ∀ t, TaskOf g c.task t → ∀ f ∈ s.active, KeysDisjoint f.writes (t.pre.map (·.key))
+
 /-! ### Valid allocation batch -/
 
 /-- Declarative correctness of an allocation batch at a snapshot. -/
@@ -142,5 +155,6 @@ structure AllocationValid (s : Snapshot) (cat : Catalogue) (g : TaskGraph)
   uniqueTasks : (b.commands.map (·.task)).Nodup
   commands    : ∀ c ∈ b.commands, CommandValid cat s g c
   independent : ResourceIndependent cat s b.commands
+  taskPreStable : TaskPreStable cat s g b.commands
 
 end AllocationChecker

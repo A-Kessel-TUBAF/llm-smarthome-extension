@@ -146,6 +146,24 @@ def activeIndepB (cat : Catalogue) (s : Snapshot) (c : Command) : Bool :=
 def checkIndependence (cat : Catalogue) (s : Snapshot) (cs : List Command) : Bool :=
   pairwiseB (pairIndepB cat) cs && cs.all (activeIndepB cat s)
 
+/-! ### Stable preconditions -/
+
+/-- The keys the task preconditions of command `c` are about. -/
+def taskPreKeys (g : TaskGraph) (c : Command) : List StateKey :=
+  match lookupTask g c.task with
+  | some t => t.pre.map (·.key)
+  | none => []
+
+def keepsTaskPreB (cat : Catalogue) (g : TaskGraph) (a b : Command) : Bool :=
+  match cmdFootprint? cat a with
+  | some fa => disjointB fa.writes (taskPreKeys g b)
+  | none => false
+
+def checkTaskPreStable (cat : Catalogue) (s : Snapshot) (g : TaskGraph) (cs : List Command) :
+    Bool :=
+  pairwiseB (fun a b => keepsTaskPreB cat g a b && keepsTaskPreB cat g b a) cs &&
+    cs.all (fun c => s.active.all (fun f => disjointB f.writes (taskPreKeys g c)))
+
 /-! ### Top-level checker -/
 
 /-- The allocation checker covered by `checkAllocation_sound`. -/
@@ -159,6 +177,7 @@ def checkAllocation (s : Snapshot) (cat : Catalogue) (g : TaskGraph)
   decide (b.commands.length ≤ s.workerCap) &&
   nodupB (b.commands.map (·.task)) &&
   b.commands.all (checkCommand cat s g) &&
-  checkIndependence cat s b.commands
+  checkIndependence cat s b.commands &&
+  checkTaskPreStable cat s g b.commands
 
 end AllocationChecker

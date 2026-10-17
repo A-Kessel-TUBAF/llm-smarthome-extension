@@ -6,14 +6,22 @@
   response encoding and IO. The verdict field of every response is computed by
   `checkAllocation` exactly; everything else is integration code that is tested
   from Python (see `docs/trust-boundaries.md`).
+
+  Exception: typed argument values. If the catalogue declares the types of an
+  operation's arguments (`"types"`), the arguments of its commands and the literal
+  arguments of its tasks are decoded by `TypedValues.decodeTypedArgs`, which is
+  proven exact (`TypedValues.decodeTypedArgs_iff`): a wrongly typed value makes the
+  request invalid instead of being encoded as some number.
 -/
 import Lean.Data.Json
 import AllocationChecker.Check
+import AllocationChecker.TypedValues
 
 namespace AllocationChecker.Codec
 
 open Lean (Json JsonNumber)
 open AllocationChecker
+open AllocationChecker.TypedValues (ArgType decodeTyped decodeTypedArgs)
 
 def schemaRequest : String := "dexa-alloc-request/1"
 def schemaResponse : String := "dexa-alloc-response/1"
@@ -136,10 +144,27 @@ def decodeArgSrc (j : Json) (ctx : String) : DecodeM ArgSrc := do
     onlyKeys j ctx ["ref", "offset"]
     pure (.ref (← asId (← field j "ref") ctx) (← asInt (← field j "offset") ctx))
 
-def decodeOp (j : Json) (ctx : String) : DecodeM OpSpec := do
+/-- Argument type `"bool"`, `{"number": scale}` or `{"enum": ["a", "b", ...]}`. -/
+def decodeArgType (j : Json) (ctx : String) : DecodeM ArgType := do
+  if j == .str "bool" then return .bool
+  match j.getObjVal? "number", j.getObjVal? "enum" with
+  | .ok sc, _ =>
+    onlyKeys j ctx ["number"]
+    let scale ← asNat sc ctx maxAbsValue
+    unless 1 ≤ scale do throw s!"{ctx}: scale must be at least 1"
+    pure (.number scale)
+  | _, .ok vs =>
+    onlyKeys j ctx ["enum"]
+    let values ← listOf vs ctx maxSmallList asStr
+    if values.isEmpty then throw s!"{ctx}: empty enumeration"
+    pure (.enum values)
+  | _, _ => throw (ctx ++ ": type must be \"bool\", {\"number\": scale} or {\"enum\": [...]}")
+
+/-- An operation, and the declared types of its arguments if the catalogue gives them. -/
+def decodeOp (j : Json) (ctx : String) : DecodeM (OpSpec × Option (List ArgType)) := do
   onlyKeys j ctx ["id", "cap", "bounds", "reads", "writes", "excl", "shared_reads", "pre",
-    "coupled", "load_base", "load_per_unit"]
-  pure
+    "coupled", "load_base", "load_per_unit", "types"]
+  let op : OpSpec :=
     { id := ← asId (← field j "id") ctx
       cap := ← asId (← field j "cap") ctx
       bounds := ← listOf (← field j "bounds") s!"{ctx}.bounds" maxSmallList decodeBound
@@ -151,6 +176,29 @@ def decodeOp (j : Json) (ctx : String) : DecodeM OpSpec := do
       coupled := ← asBool (← field j "coupled") ctx
       loadBase := ← asInt (← field j "load_base") ctx
       loadPerUnit := ← asInt (← field j "load_per_unit") ctx }
+  match j.getObjVal? "types" with
+  | .ok ts =>
+    let types ← listOf ts s!"{ctx}.types" maxSmallList decodeArgType
+    unless types.length = op.bounds.length do
+      throw s!"{ctx}: one type per argument bound expected"
+    pure (op, some types)
+  | .error _ => pure (op, none)
+
+/-- Declared argument types per operation identifier. -/
+abbrev TypeTable := List (Nat × List ArgType)
+
+def typesOf (tt : TypeTable) (op : Nat) : Option (List ArgType) :=
+  (tt.find? (·.1 == op)).map (·.2)
+
+/-- Arguments of operation `op`: typed values if its types are declared, integers otherwise. -/
+def decodeArgs (tt : TypeTable) (op : Nat) (j : Json) (ctx : String) : DecodeM (List Int) := do
+  match typesOf tt op with
+  | some types =>
+    let a ← asArr j ctx
+    match decodeTypedArgs types a.toList with
+    | .ok ns => pure ns
+    | .error e => throw s!"{ctx}: {e}"
+  | none => listOf j ctx maxSmallList asInt
 
 def decodeDevice (j : Json) (ctx : String) : DecodeM Device := do
   onlyKeys j ctx ["id", "caps", "ops"]
@@ -159,34 +207,58 @@ def decodeDevice (j : Json) (ctx : String) : DecodeM Device := do
       caps := ← idList (← field j "caps") s!"{ctx}.caps"
       ops := ← listOf (← field j "ops") s!"{ctx}.ops" maxOps asId }
 
-def decodeCatalogue (j : Json) : DecodeM Catalogue := do
+def decodeCatalogue (j : Json) : DecodeM (Catalogue × TypeTable) := do
   onlyKeys j "catalogue" ["revision", "ops", "devices", "load_attr", "meter_key", "load_budget"]
-  pure
+  let ops ← listOf (← field j "ops") "catalogue.ops" maxOps decodeOp
+  let cat : Catalogue :=
     { revision := ← asNat (← field j "revision") "catalogue.revision"
-      ops := ← listOf (← field j "ops") "catalogue.ops" maxOps decodeOp
+      ops := ops.map (·.1)
       devices := ← listOf (← field j "devices") "catalogue.devices" maxDevices decodeDevice
       loadAttr := ← asId (← field j "load_attr") "catalogue.load_attr"
       meterKey := ← decodeKey (← field j "meter_key") "catalogue.meter_key"
       loadBudget := ← asInt (← field j "load_budget") "catalogue.load_budget" }
+  pure (cat, ops.filterMap fun (o, ts) => ts.map (o.id, ·))
 
-def decodeTask (j : Json) (ctx : String) : DecodeM Task := do
+/-- The task contract's arguments. With declared types, every literal is a typed value of its
+    position's type; references to dependency outputs stay as they are. An empty list is
+    accepted for any task: the arguments of tasks outside the batch do not matter, and a task
+    of the batch without arguments fails the arity check of the specification. -/
+def decodeTaskArgs (tt : TypeTable) (op : Nat) (j : Json) (ctx : String) :
+    DecodeM (List ArgSrc) := do
+  match typesOf tt op with
+  | none => listOf j ctx maxSmallList decodeArgSrc
+  | some types =>
+    let a ← asArr j ctx
+    if a.isEmpty then return []
+    unless a.size = types.length do throw s!"{ctx}: one argument per declared type expected"
+    (a.toList.zip types).mapM fun (arg, ty) => do
+      match arg.getObjVal? "lit" with
+      | .ok v =>
+        onlyKeys arg ctx ["lit"]
+        match decodeTyped ty v with
+        | .ok n => pure (.lit n)
+        | .error e => throw s!"{ctx}: {e}"
+      | .error _ => decodeArgSrc arg ctx
+
+def decodeTask (tt : TypeTable) (j : Json) (ctx : String) : DecodeM Task := do
   onlyKeys j ctx ["id", "status", "op", "device", "args", "deps", "rank", "pre", "deadline"]
+  let op ← asId (← field j "op") ctx
   pure
     { id := ← asId (← field j "id") ctx
       status := ← decodeStatus (← field j "status") ctx
-      op := ← asId (← field j "op") ctx
+      op := op
       device := ← asId (← field j "device") ctx
-      args := ← listOf (← field j "args") s!"{ctx}.args" maxSmallList decodeArgSrc
+      args := ← decodeTaskArgs tt op (← field j "args") s!"{ctx}.args"
       deps := ← idList (← field j "deps") s!"{ctx}.deps"
       rank := ← asNat (← field j "rank") ctx maxTasks
       pre := ← listOf (← field j "pre") s!"{ctx}.pre" maxSmallList decodePre
       deadline := ← asNat (← field j "deadline") ctx }
 
-def decodeGraph (j : Json) : DecodeM TaskGraph := do
+def decodeGraph (tt : TypeTable) (j : Json) : DecodeM TaskGraph := do
   onlyKeys j "graph" ["revision", "tasks"]
   pure
     { revision := ← asNat (← field j "revision") "graph.revision"
-      tasks := ← listOf (← field j "tasks") "graph.tasks" maxTasks decodeTask }
+      tasks := ← listOf (← field j "tasks") "graph.tasks" maxTasks (decodeTask tt) }
 
 /-- State entry `[dev, attr, value, version]`. -/
 def decodeEntry (j : Json) (ctx : String) : DecodeM Entry := do
@@ -227,20 +299,22 @@ def decodeSnapshot (j : Json) : DecodeM Snapshot := do
       evidence := ← listOf (← field j "evidence") "snapshot.evidence" maxEvidence decodeEvidence
       active := ← listOf (← field j "active") "snapshot.active" maxActive decodeFootprint }
 
-def decodeCommand (j : Json) (ctx : String) : DecodeM Command := do
+def decodeCommand (tt : TypeTable) (j : Json) (ctx : String) : DecodeM Command := do
   onlyKeys j ctx ["task", "device", "op", "args"]
+  let op ← asId (← field j "op") ctx
   pure
     { task := ← asId (← field j "task") ctx
       device := ← asId (← field j "device") ctx
-      op := ← asId (← field j "op") ctx
-      args := ← listOf (← field j "args") s!"{ctx}.args" maxSmallList asInt }
+      op := op
+      args := ← decodeArgs tt op (← field j "args") s!"{ctx}.args" }
 
-def decodeBatch (j : Json) : DecodeM AllocationBatch := do
+def decodeBatch (tt : TypeTable) (j : Json) : DecodeM AllocationBatch := do
   onlyKeys j "batch" ["graph_revision", "catalogue_revision", "commands"]
   pure
     { graphRev := ← asNat (← field j "graph_revision") "batch.graph_revision"
       catalogueRev := ← asNat (← field j "catalogue_revision") "batch.catalogue_revision"
-      commands := ← listOf (← field j "commands") "batch.commands" maxCommands decodeCommand }
+      commands := ← listOf (← field j "commands") "batch.commands" maxCommands
+        (decodeCommand tt) }
 
 structure Request where
   requestId : String
@@ -256,12 +330,13 @@ def decodeRequest (j : Json) : DecodeM Request := do
   unless schema = schemaRequest do throw s!"unsupported schema '{schema}'"
   let rid ← asStr (← field j "request_id") "request_id"
   unless rid.length ≤ 128 do throw "request_id too long"
+  let (cat, tt) ← decodeCatalogue (← field j "catalogue")
   pure
     { requestId := rid
-      catalogue := ← decodeCatalogue (← field j "catalogue")
-      graph := ← decodeGraph (← field j "graph")
+      catalogue := cat
+      graph := ← decodeGraph tt (← field j "graph")
       snapshot := ← decodeSnapshot (← field j "snapshot")
-      batch := ← decodeBatch (← field j "batch")
+      batch := ← decodeBatch tt (← field j "batch")
       authTtl := ← asNat (← field j "auth_ttl") "auth_ttl" }
 
 /-- Best-effort request identifier for error responses. -/
@@ -323,9 +398,15 @@ def diagnose (s : Snapshot) (cat : Catalogue) (g : TaskGraph) (b : AllocationBat
         if d?.isNone then out := out.push { code := "unknown_device", cmd := some i, task := some c.task }
       unless activeIndepB cat s c do
         out := out.push { code := "conflicts_with_running_operation", cmd := some i, task := some c.task }
+      unless s.active.all (fun f => disjointB f.writes (taskPreKeys g c)) do
+        out := out.push { code := "task_precondition_conflicts_with_running_operation",
+                          cmd := some i, task := some c.task }
       for h2 : j in [i+1:cs.size] do
         unless pairIndepB cat c cs[j] do
           out := out.push { code := "resource_conflict", cmd := some i, other := some j, task := some c.task }
+        unless keepsTaskPreB cat g c cs[j] && keepsTaskPreB cat g cs[j] c do
+          out := out.push { code := "task_precondition_conflict", cmd := some i, other := some j,
+                            task := some c.task }
     pure out.toList
 
 /-! ### Authorization bindings for accepted batches -/

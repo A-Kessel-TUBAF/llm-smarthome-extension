@@ -17,7 +17,8 @@
      what lets the universally quantified footprint condition of the
      specification follow from the single footprint the checker computes.
   4. Component lemmas for preconditions, evidence, dependencies, argument
-     resolution, the load policy, per-command fit and resource independence.
+     resolution, the load policy, per-command fit, resource independence and
+     stable task preconditions.
   5. `checkAllocation_sound` splits the Boolean conjunction and composes 1–4.
 -/
 import AllocationChecker.Spec
@@ -247,6 +248,42 @@ theorem checkIndependence_sound {cat : Catalogue} {s : Snapshot} {cs : List Comm
   exact ⟨hp.imp (fun hab => pairIndepB_sound hwf hab),
     fun c hc => activeIndepB_sound hwf (ha c hc)⟩
 
+/-- With unambiguous task identifiers, `taskPreKeys` gives the keys of the
+    task's preconditions. -/
+theorem taskPreKeys_eq {g : TaskGraph} {c : Command} {t : Task} (hwf : GraphWF g)
+    (ht : TaskOf g c.task t) : taskPreKeys g c = t.pre.map (·.key) := by
+  unfold taskPreKeys
+  cases hl : lookupTask g c.task with
+  | none =>
+    simp only [lookupTask, List.find?_eq_none] at hl
+    exact absurd (by simp [ht.2]) (hl t ht.1)
+  | some u =>
+    have hu := lookupTask_sound hl
+    obtain rfl : u = t := eq_of_mem_of_nodup_map hwf.1 hu.1 ht.1 (hu.2.trans ht.2.symm)
+    rfl
+
+theorem keepsTaskPreB_sound {cat : Catalogue} {g : TaskGraph} {a b : Command}
+    (hc : CatalogueWF cat) (hg : GraphWF g) (h : keepsTaskPreB cat g a b = true) :
+    KeepsTaskPre cat g a b := by
+  intro fa t hfa ht
+  unfold keepsTaskPreB at h
+  cases ha : cmdFootprint? cat a with
+  | none => simp [ha] at h
+  | some fa' =>
+    simp only [ha] at h
+    rw [cmdFootprint_unique hc ha hfa, ← taskPreKeys_eq hg ht]
+    exact disjointB_iff.mp h
+
+theorem checkTaskPreStable_sound {cat : Catalogue} {s : Snapshot} {g : TaskGraph}
+    {cs : List Command} (hc : CatalogueWF cat) (hg : GraphWF g)
+    (h : checkTaskPreStable cat s g cs = true) : TaskPreStable cat s g cs := by
+  simp only [checkTaskPreStable, Bool.and_eq_true, pairwiseB_iff, List.all_eq_true] at h
+  obtain ⟨hp, ha⟩ := h
+  refine ⟨hp.imp fun hab => ⟨keepsTaskPreB_sound hc hg hab.1, keepsTaskPreB_sound hc hg hab.2⟩,
+    fun c hcs t ht f hf => ?_⟩
+  rw [← taskPreKeys_eq hg ht]
+  exact disjointB_iff.mp (ha c hcs f hf)
+
 theorem checkCatalogueWF_sound {cat : Catalogue} (h : checkCatalogueWF cat = true) :
     CatalogueWF cat := by
   simp only [checkCatalogueWF, Bool.and_eq_true, nodupB_iff] at h
@@ -282,18 +319,20 @@ theorem checkAllocation_sound
   intro h
   simp only [checkAllocation, Bool.and_eq_true, and_assoc, beq_iff_eq, decide_eq_true_eq,
     List.all_eq_true] at h
-  obtain ⟨hcat, hsnap, hgraph, hgr, hcr, hcap, hnd, hcmds, hind⟩ := h
+  obtain ⟨hcat, hsnap, hgraph, hgr, hcr, hcap, hnd, hcmds, hind, hpre⟩ := h
   have hcatWF := checkCatalogueWF_sound hcat
+  have hgraphWF := checkGraphWF_sound hgraph
   exact
     { catalogueWF := hcatWF
       snapshotWF := checkSnapshotWF_sound hsnap
-      graphWF := checkGraphWF_sound hgraph
+      graphWF := hgraphWF
       graphRev := hgr
       catalogueRev := hcr
       workerCap := hcap
       uniqueTasks := nodupB_iff.mp hnd
       commands := fun c hc => checkCommand_sound (hcmds c hc)
-      independent := checkIndependence_sound hcatWF hind }
+      independent := checkIndependence_sound hcatWF hind
+      taskPreStable := checkTaskPreStable_sound hcatWF hgraphWF hpre }
 
 /-! ### Corollary: the rank witness certifies acyclicity -/
 
