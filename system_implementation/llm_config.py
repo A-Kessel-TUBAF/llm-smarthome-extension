@@ -1,9 +1,21 @@
 import os
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from agent_registry import AGENT_REGISTRY
 
 # Reads API keys and settings from a .env file in this folder (if present)
 load_dotenv()
+
+DEFAULT_MODEL = os.getenv("LLM_MODEL") or "ollama:gemma2"
+SAME_LLM_FOR_ALL_AGENTS = True
+ROLE_MODELS = dict.fromkeys(
+    ["intent_analysis", "planner", "scheduler", *AGENT_REGISTRY],
+    DEFAULT_MODEL,
+)
+# For individual models: set SAME_LLM_FOR_ALL_AGENTS = False and override entries:
+# ROLE_MODELS["planner"] = "openai:gpt-4o-mini"
+# ROLE_MODELS["lighting"] = "ollama:gemma2"
+_models = {}  # Reuse one client per model; initialize only when needed.
 
 API_KEY_VARS = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 SETUP_HINT = (
@@ -11,7 +23,7 @@ SETUP_HINT = (
     "or use an online API: set LLM_MODEL and its API key in system_implementation/.env " 
 )
 
-def get_llm():
+def get_llm(role=None):
     """
     Build the chat model from env vars, so local and online models are interchangeable.
     LLM_MODEL = "provider:model", e.g.
@@ -21,7 +33,9 @@ def get_llm():
     OPENAI_BASE_URL = optional, for OpenAI-compatible services 
     (GWDG Chat AI, OpenRouter, Groq, vLLM, ...)
     """
-    model = os.getenv("LLM_MODEL") or "ollama:gemma2"
+    model = DEFAULT_MODEL if SAME_LLM_FOR_ALL_AGENTS else ROLE_MODELS.get(role, DEFAULT_MODEL)
+    if model in _models:
+        return _models[model]
     provider = model.split(":", 1)[0]
     kwargs = {"temperature": 0.0}  # fixed for repeatable benchmark runs
 
@@ -32,7 +46,9 @@ def get_llm():
     if provider == "ollama":
         kwargs["validate_model_on_init"] = True  # checks Ollama is running and the model is pulled        
         try:
-            return init_chat_model(model, **kwargs)
+            _models[model] = init_chat_model(model, **kwargs)
+            return _models[model]
         except (ValueError, ConnectionError) as e:
             raise RuntimeError(f"Local model '{model}' is not available.\n{e}\n\n{SETUP_HINT}") from None
-    return init_chat_model(model, **kwargs)
+    _models[model] = init_chat_model(model, **kwargs)
+    return _models[model]

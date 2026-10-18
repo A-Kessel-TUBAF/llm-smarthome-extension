@@ -26,7 +26,6 @@ from langgraph.types import Command, Send, interrupt
 from agent_registry import AGENT_REGISTRY
 from home_defaults import HOME_DEFAULTS, SEARCH_FIXTURES
 
-llm = None  # Created on the first model call; importing the module does not need a server.
 SCHEDULER_MODE = os.getenv("SCHEDULER_MODE", "python")  # Central ablation switch, also read from .env.
 
 # Live objects stay outside LangGraph checkpoints: workers share one simulator per request.
@@ -641,10 +640,8 @@ def execute_action(state):
     return Command(update={"task_results": [result]}, goto="complete_round")
 
 
-def _ask(instructions, *, expected=None, **context):
-    global llm
-    if llm is None:
-        llm = get_llm()
+def _ask(instructions, *, role="planner", expected=None, **context):
+    llm = get_llm(role)
     result = (llm | JsonOutputParser()).invoke([
         SystemMessage(content=instructions + "\nReturn only the requested JSON object; no explanation."),
         HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":"))),
@@ -666,7 +663,7 @@ def human(state):
 def intent_analysis(state):
     result = _ask('Extract intents/facts and HOW, WHEN, WHERE, quantities and negation. '
                   'Output: {"infos": ["..."], "key_modifiers": ["..."]}.',
-                  expected={"infos": list},
+                  role="intent_analysis", expected={"infos": list},
                   user_message=state["original_user_input"])
     return Command(update={"infos": result["infos"], "key_modifiers": result.get("key_modifiers", [])}, goto="task_planner")
 
@@ -730,7 +727,7 @@ def task_planner(state):
                       '"arguments": {"device_id": "light_lr_ceiling"}, "depends_on": []}], '
                       '"requirements": [{"skill_id": "turn_on", "arguments": {"device_id": "light_lr_ceiling"}}]}], '
                       '"response": "reason if no tasks"}. The actions field is optional.',
-                      expected={"task_queue": list}, **context)
+                      role="planner", expected={"task_queue": list}, **context)
         queue = []
         for index, raw in enumerate(result["task_queue"]):
             if not isinstance(raw, dict) or not isinstance(raw.get("action"), str) or not raw["action"].strip():
@@ -837,7 +834,7 @@ def _agent(state, agent):
                     '{"actions": [{"skill_id": "<operation>", "arguments": {"<parameter>": "<value>"}}], '
                     '"collaboration_request": {"target": "fridge", "request": "specific question"} or {}}.')
     try:
-        result = _ask(instructions, expected={"actions": list},
+        result = _ask(instructions, role=agent, expected={"actions": list},
                       original_input=state["original_user_input"],
                       search_fixture_queries=list(state["simulation_data"].get("search_results", {})) if agent == "search_engine" else [],
                       agent=agent, task=task, agent_card=available[agent], available_agents=list(available),

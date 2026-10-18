@@ -85,7 +85,7 @@ AGENT_REGISTRY = {
             'search': {
                 "description": 'Informationen zu einer Suchanfrage liefern.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'max_results': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 5}},
-                "output": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'provider': {'enum': ['simulation', 'backend']}, 'results': {'type': 'array', 'items': {'type': 'object', 'properties': {'title': {'type': 'string', 'minLength': 1}, 'url': {'type': ['string', 'null'], 'format': 'uri'}, 'snippet': {'type': 'string'}}, 'required': ['title', 'url', 'snippet'], 'additionalProperties': False}}},
+                "output": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'provider': {'enum': ['simulation', 'backend']}, 'results': {'type': 'array', 'items': {'type': 'object', 'properties': {'title': {'type': 'string', 'minLength': 1}, 'url': {'type': ['string', 'null'], 'format': 'uri'}, 'snippet': {'type': 'string'}, "content": {"type": "string"}, "data": {"type": "object"},}, 'required': ['title', 'url', 'snippet'], 'additionalProperties': False}}},
                 "reads": [], "writes": [],
                 "preconditions": [{'context': 'search_available', 'equals': True}],
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'search_matches_source'}],
