@@ -49,21 +49,6 @@ class Simulator:
                     unit=old.get("unit", UNITS.get(key.rsplit(".", 1)[-1])), observed_at=now,
                     version=old.get("version", 0) + 1), "ref": ref}
 
-    def admit(self, action):
-        # One critical section covers freshness AND reservation; tool calls run outside it.
-        with self.lock:
-            if time.monotonic() >= action["dispatch_until"] or any(
-                self.home.get(k, {}).get("version", 0) != v for k, v in action["bound_versions"].items()
-            ):
-                raise ValueError("FreshDispatch: checked state is stale or authorization expired.")
-            reads, writes, target = action["footprint"]
-            reads, writes = set(reads), set(writes)
-            if any(target == t or writes & (r | w) or reads & w
-                   for r, w, t in self.reservations.values()):
-                raise ValueError("FreshDispatch: resource is reserved by another action.")
-            self.reservations[action["task_id"]] = (reads, writes, target)
-            return deepcopy(self.home)
-
     def release(self, action_id):
         with self.lock:
             self.reservations.pop(action_id, None)
@@ -84,6 +69,7 @@ class Task(TypedDict):
     scope: list[str]
     constraints: list[str]
     goal: dict
+    failure: dict | None
     # Optional actions contains an already concrete plan; absent means domain refinement.
 
 class Action(TypedDict):
@@ -93,6 +79,7 @@ class Action(TypedDict):
     arguments: dict
     depends_on: list[str]
     status: str
+    execution_retries: int
 
 class TaskResult(TypedDict):
     task_id: str
@@ -104,6 +91,8 @@ class TaskResult(TypedDict):
     output: dict
     observations: dict[str, Observation]
     error: str | None
+    failure: dict | None
+    execution_retries: int
     verified: bool
 
 class SmartHomeState(TypedDict):
@@ -538,58 +527,71 @@ def check_condition(condition, arguments, home, context):
                      value(prefix + "stopwatch_started_at") is None and value(prefix + "stopwatch_elapsed_seconds") == elapsed))
     raise ValueError(f"Unbekannte Vertragsregel: {rule}")
 
-def validate_action(state):
+def validate_action(state, home=None):
     action = deepcopy(state["pending_actions"][0])
     task, args, skill = action["task"], action.get("arguments", {}), action.get("skill_id", "")
+    simulator = SIMULATORS[state["request_id"]]
+    failure = {"kind": "plan"}
     try:
-        home = {**state["home_state"], **SIMULATORS[state["request_id"]].snapshot()}
-        args, source_actions = resolve_arguments(state, action)
-        action.update(arguments=args, source_actions=source_actions,
-                      depends_on=list(dict.fromkeys(action.get("depends_on", []) + source_actions)))
-        card = state["agent_registry"][task["agent_id"]]
-        if not card["enabled"] or skill not in card["capabilities"] or skill not in card["operations"]:
-            raise ValueError("Agent oder Skill ist nicht verfuegbar.")
-        definition = card["operations"][skill]
-        for key, schema in definition["parameters"].items():
-            if key not in args and "default" in schema:
-                args[key] = deepcopy(schema["default"])
-        if state["settings"]["validate_contracts"]:
-            schema = {"type": "object", "properties": definition["parameters"],
-                      "required": list(definition["parameters"]),
-                      "additionalProperties": False}
-            Draft202012Validator(schema, format_checker=FormatChecker()).validate(args)
-            # NaN/Infinity are Python numbers but not valid JSON arguments.
-            json.dumps(args, allow_nan=False)
-        elif set(definition["parameters"]) - args.keys():
-            raise ValueError("Pflichtargument fehlt.")
-        check_goal(state, task, [action])
-        target_key = "device_id" if "device_id" in definition["parameters"] else "service_id"
-        section = "devices" if target_key == "device_id" else "services"
-        target = state["home_config"][section][args[target_key]]
-        if target["agent_id"] != task["agent_id"] or skill not in target["skills"]:
-            raise ValueError("Agent, Ziel und Skill passen nicht zusammen.")
-        if target_key == "device_id" and task.get("scope"):
-            if args[target_key] not in task["scope"] and target.get("room_id") not in task["scope"]:
-                raise ValueError("Geraet liegt ausserhalb des zugewiesenen Auftragsbereichs.")
-        now = state["simulation_data"].get("now") or datetime.now(timezone.utc).isoformat()
-        context = {"now": now, "mode": "simulation",
-                   "search_available": state["simulation_data"].get("search_available", True)}
-        if state["settings"]["validate_contracts"]:
-            for condition in definition["preconditions"]:
-                if not check_condition(condition, args, home, context):
-                    raise ValueError(f"Precondition nicht erfuellt: {condition}")
-        action.update(arguments=args, now=now, agent_id=task["agent_id"], depends_on=action.get("depends_on", []))
-        reads, writes, target = action_footprint(state, action)
-        bindings = {k: home.get(k, {}).get("version", 0) for k in reads | writes}
-        for dep in action.get("depends_on", []):
-            bindings.update(state["action_graph"].get(dep, {}).get("evidence_versions", {}))
-        action.update(footprint=(sorted(reads), sorted(writes), target), bound_versions=bindings,
-                      dispatch_until=time.monotonic() + 30)
-        return Command(update={"pending_actions": [action, *state["pending_actions"][1:]], "home_state": home}, goto="execute_action")
+        with simulator.lock:
+            home = {**state["home_state"], **(simulator.snapshot() if home is None else home)}
+            args, source_actions = resolve_arguments(state, action)
+            action.update(arguments=args, source_actions=source_actions,
+                          depends_on=list(dict.fromkeys(action.get("depends_on", []) + source_actions)))
+            card = state["agent_registry"][task["agent_id"]]
+            if not card["enabled"] or skill not in card["capabilities"] or skill not in card["operations"]:
+                raise ValueError("Agent oder Skill ist nicht verfuegbar.")
+            definition = card["operations"][skill]
+            for key, schema in definition["parameters"].items():
+                if key not in args and "default" in schema:
+                    args[key] = deepcopy(schema["default"])
+            if state["settings"]["validate_contracts"]:
+                schema = {"type": "object", "properties": definition["parameters"],
+                          "required": list(definition["parameters"]),
+                          "additionalProperties": False}
+                Draft202012Validator(schema, format_checker=FormatChecker()).validate(args)
+                # NaN/Infinity are Python numbers but not valid JSON arguments.
+                json.dumps(args, allow_nan=False)
+            elif set(definition["parameters"]) - args.keys():
+                raise ValueError("Pflichtargument fehlt.")
+            check_goal(state, task, [action])
+            target_key = "device_id" if "device_id" in definition["parameters"] else "service_id"
+            section = "devices" if target_key == "device_id" else "services"
+            target = state["home_config"][section][args[target_key]]
+            if target["agent_id"] != task["agent_id"] or skill not in target["skills"]:
+                raise ValueError("Agent, Ziel und Skill passen nicht zusammen.")
+            if target_key == "device_id" and task.get("scope"):
+                if args[target_key] not in task["scope"] and target.get("room_id") not in task["scope"]:
+                    raise ValueError("Geraet liegt ausserhalb des zugewiesenen Auftragsbereichs.")
+            now = state["simulation_data"].get("now") or datetime.now(timezone.utc).isoformat()
+            context = {"now": now, "mode": "simulation",
+                       "search_available": state["simulation_data"].get("search_available", True)}
+            if state["settings"]["validate_contracts"]:
+                for condition in definition["preconditions"]:
+                    failure = {"kind": "precondition", "condition": condition}
+                    if not check_condition(condition, args, home, context):
+                        raise ValueError(f"Precondition nicht erfuellt: {condition}")
+            action.update(arguments=args, now=now, agent_id=task["agent_id"], depends_on=action.get("depends_on", []))
+            reads, writes, target = action_footprint(state, action)
+            bindings = {k: home.get(k, {}).get("version", 0) for k in reads | writes}
+            for dep in action.get("depends_on", []):
+                bindings.update(state["action_graph"].get(dep, {}).get("evidence_versions", {}))
+            failure = {"kind": "dispatch"}
+            if any(home.get(k, {}).get("version", 0) != v for k, v in bindings.items()):
+                raise ValueError("FreshDispatch: dependency evidence is stale.")
+            if any(target == t or writes & (r | w) or reads & w
+                   for r, w, t in simulator.reservations.values()):
+                raise ValueError("FreshDispatch: resource is reserved by another action.")
+            action.update(footprint=(sorted(reads), sorted(writes), target), bound_versions=bindings,
+                          before={k: deepcopy(home[k]) for k in reads | writes if k in home},
+                          dispatch_until=time.monotonic() + 30)
+            simulator.reservations[action["task_id"]] = (reads, writes, target)
+            return Command(update={"pending_actions": [action, *state["pending_actions"][1:]], "home_state": home}, goto="execute_action")
     except (KeyError, ValueError, TypeError, AttributeError, OverflowError, ValidationError, NotImplementedError) as exc:
         result: TaskResult = dict(task_id=action["task_id"], attempt_id=uuid4().hex,
                                  agent_id=task["agent_id"], skill_id=skill, arguments=args,
-                                  status="failed", verified=False, output={}, observations={},
+                                  status="stale" if failure["kind"] == "dispatch" else "failed",
+                                  verified=False, output={}, observations={}, failure=failure,
                                   error=f"ValidationError: {exc.message if isinstance(exc, ValidationError) else exc}")
         return Command(update={"task_results": [result]}, goto="complete_round")
 
@@ -598,16 +600,23 @@ def execute_action(state):
     task, skill, args = action["task"], action["skill_id"], action["arguments"]
     result: TaskResult = dict(task_id=action["task_id"], attempt_id=uuid4().hex,
                              agent_id=task["agent_id"], skill_id=skill, arguments=deepcopy(args),
-                              status="failed", verified=False, output={}, observations={}, error=None)
+                              status="failed", verified=False, output={}, observations={}, error=None, failure=None,
+                              execution_retries=action.get("execution_retries", 0))
     simulator = SIMULATORS[state["request_id"]]
     admitted = False
+    failure = {"kind": "dispatch"}
     try:
-        before = simulator.admit(action)
+        if time.monotonic() >= action["dispatch_until"]:
+            raise ValueError("FreshDispatch: authorization expired.")
+        before = action["before"]
+        result["before"] = before
         admitted = True
         parameters = state["agent_registry"][task["agent_id"]]["operations"][skill]["parameters"]
         target_key = "device_id" if "device_id" in parameters else "service_id"
+        failure = {"kind": "tool"}
         output = TOOLS[(task["agent_id"], skill)](
             skill, args, simulator, action["now"], {**state["simulation_data"], "_action_id": action["task_id"]})
+        failure = {"kind": "output"}
         observed = simulator.snapshot()
         # Observe actual device/service writes; returned dictionaries cannot fabricate state changes.
         result.update(status="success", output={target_key: args[target_key], **output})
@@ -618,25 +627,27 @@ def execute_action(state):
             Draft202012Validator(schema, format_checker=FormatChecker()).validate(result["output"])
             context = {"now": action["now"], "output": result["output"], "before": before,
                        "simulation": state["simulation_data"]}
-            if not all(check_condition(c, args, observed, context) for c in definition["postconditions"]):
-                raise ValueError("OutcomeError: observed outcome does not match the operation contract.")
+            for condition in definition["postconditions"]:
+                failure = {"kind": "postcondition", "condition": condition}
+                if not check_condition(condition, args, observed, context):
+                    raise ValueError("OutcomeError: observed outcome does not match the operation contract.")
             result["verified"] = True
-        result.update(before={k: before[k] for k in set(action["footprint"][0]) | set(action["footprint"][1]) if k in before},
-                      evidence_versions={k: observed[k]["version"] for k in
+        result.update(evidence_versions={k: observed[k]["version"] for k in
                                          set(action["footprint"][0]) | set(action["footprint"][1]) if k in observed},
                       valid_until=time.time() + (600 if not action["footprint"][1] else 3600))
         # Also record read-only results with source/time metadata, outside the device-property namespace.
         result["observations"].update({f"result.{action['task_id']}.{key}": make_observation(
             value, source="simulation:result", observed_at=action["now"])
             for key, value in result["output"].items()})
-    except (KeyError, ValueError, TypeError, AttributeError, OverflowError, ValidationError, NotImplementedError) as exc:
+    except Exception as exc:
         result["status"] = "failed" if admitted else "stale"
+        result["failure"] = failure
         result["error"] = f"ToolError: {type(exc).__name__}: {exc}"
     finally:
         if admitted:
             observed = simulator.snapshot()
             result["observations"].update({k: observed[k] for k in action["footprint"][1] if k in observed})
-            simulator.release(action["task_id"])
+        simulator.release(action["task_id"])
     return Command(update={"task_results": [result]}, goto="complete_round")
 
 
@@ -784,7 +795,8 @@ def task_planner(state):
     except (ValueError, KeyError, TypeError) as exc:
         if not repair:
             return Command(update={"final_response": json.dumps(
-                {"status": "failed", "error": f"PlannerError: {exc}"}, ensure_ascii=False)}, goto="finish")
+                {"status": "failed", "error": f"PlannerError: {exc}",
+                 "failure": {"kind": "plan"}}, ensure_ascii=False)}, goto="finish")
         error = f"PlannerRepairError: {exc}"
         settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
         if settings["replans"] < settings["max_replans"]:
@@ -792,7 +804,8 @@ def task_planner(state):
                            goto="task_planner")
         tasks = deepcopy(state["tasks"])
         for task_id in repair["task_ids"]:
-            tasks[task_id].update(status="failed", terminal=True, error=error)
+            tasks[task_id].update(status="failed", terminal=True, error=error,
+                                  failure={"kind": "plan"})
         return Command(update={"tasks": tasks, "settings": settings, "repair_context": {}}, goto="plan_agents")
 
 
@@ -841,7 +854,7 @@ def _agent(state, agent):
                       home_state={key: observation["value"] for key, observation in state["home_state"].items()
                                   if not key.startswith("result.")},
                       task_history=[{**h, "results": [r for r in h["results"]
-                          if state["action_graph"].get(r["task_id"], {}).get("status") == "success"]}
+                          if r["status"] == "success" and state["action_graph"].get(r["task_id"], {}).get("status") == "success"]}
                           for h in state["task_history"]] if graph_mode else state["task_history"],
                       repair={"attempt": task.get("repairs", 0), "error": task.get("error"),
                               "retained_actions": [a for a in state["action_graph"].values()
@@ -936,6 +949,9 @@ def plan_agents(state):
             task = tasks[a["task"]["task_id"]]
             if not task.get("terminal"):
                 task.update(status="failed", error=task.get("error") or "Observed outcome or dependency is no longer valid.")
+                if a.get("failure") or not task.get("failure"):
+                    task["failure"] = a.get("failure") or {
+                        "kind": "postcondition" if i in invalid and a["footprint"][1] else "dispatch"}
     graph = {i: a for i, a in graph.items() if i not in invalid}
     for a in graph.values():
         if a.get("superseded"):
@@ -1007,7 +1023,8 @@ def collect_plans(state):
                 raise ValueError(report["error"])
             response = report["response"]
             if response.get("replan_required"):
-                task.update(status="failed", requires_replan=True, error=response.get("reason", "Cross-agent repair requested."))
+                task.update(status="failed", requires_replan=True, error=response.get("reason", "Cross-agent repair requested."),
+                            failure={"kind": "plan"})
                 continue
             request = response.get("collaboration_request") or {}
             if request.get("target"):
@@ -1059,14 +1076,55 @@ def collect_plans(state):
             graph = candidate
             task["status"] = "planned"
         except (KeyError, ValueError, TypeError, CycleError) as exc:
-            task.update(status="failed", error=f"PlanError: {exc}")
+            task.update(status="failed", error=f"PlanError: {exc}", failure={"kind": "plan"})
     return Command(update={"tasks": tasks, "action_graph": graph}, goto="plan_agents")
 
 def validate_plan(state):
-    graph = state["action_graph"]
+    graph = deepcopy(state["action_graph"])
+    home = SIMULATORS[state["request_id"]].snapshot()
     affected = set()
     cross_agent = False
     try:
+        # Only explicitly approved prerequisites; preserve existing ordering and goals.
+        for action_id in tuple(TopologicalSorter({i: a["depends_on"] for i, a in graph.items()}).static_order()):
+            action = graph[action_id]
+            if action["status"] != "pending" or not state["settings"]["validate_contracts"]:
+                continue
+            affected = {action["task"]["task_id"]}
+            args, agent = action["arguments"], action["agent_id"]
+            operations = state["agent_registry"][agent]["operations"]
+            for path, preparation in operations[action["skill_id"]].get("auto_prepare", {}).items():
+                if not any(c.get("state") == path and c.get("equals") is True
+                           for c in operations[action["skill_id"]]["preconditions"]):
+                    continue
+                order = tuple(TopologicalSorter({i: a["depends_on"] for i, a in graph.items()}).static_order())
+                ancestors = {}
+                for i in order:
+                    ancestors[i] = set(graph[i]["depends_on"]).union(*(ancestors[d] for d in graph[i]["depends_on"]))
+                key = path.format_map(args)
+                writers = [i for i in order if i in ancestors[action_id] and graph[i]["status"] == "pending"
+                           and key in graph[i]["footprint"][1]]
+                powered = home.get(key, {}).get("value")
+                if writers:
+                    previous = graph[writers[-1]]
+                    conditions = state["agent_registry"][previous["agent_id"]]["operations"][previous["skill_id"]]["postconditions"]
+                    powered = next((c["equals"] for c in conditions if "equals" in c and
+                                    c.get("state", "").format_map(previous["arguments"]) == key), None)
+                if powered is True:
+                    continue
+                on_id = next((i for i, a in graph.items() if a["skill_id"] == preparation and
+                              a["agent_id"] == agent and a["arguments"].get("device_id") == args["device_id"] and
+                              a["status"] == "pending" and i not in ancestors[action_id] and
+                              i != action_id and action_id not in ancestors[i] and
+                              all(w in ancestors[i] for w in writers)), None)
+                if on_id is None:
+                    on_id = f"{action_id}:prepare-{len(graph)}"
+                    graph[on_id] = dict(task_id=on_id, task=deepcopy(action["task"]), agent_id=agent,
+                                        skill_id=preparation, arguments={"device_id": args["device_id"]},
+                                        depends_on=list(action["depends_on"]), status="pending")
+                    reads, writes, target = action_footprint({**state, "action_graph": graph}, graph[on_id])
+                    graph[on_id]["footprint"] = (sorted(reads), sorted(writes), target)
+                action["depends_on"].append(on_id)
         order = tuple(TopologicalSorter({i: a["depends_on"] for i, a in graph.items()}).static_order())
         ancestors, effects = {}, {}
         for action_id in order:
@@ -1086,22 +1144,28 @@ def validate_plan(state):
                     cross_agent = len(affected) > 1
                     raise ValueError(f"PlanError: widerspruechliche Ziele ohne Reihenfolge: {other_id}, {action_id}.")
             effects[action_id] = desired
-        return Command(goto="scheduler")
+        return Command(update={"action_graph": graph}, goto="scheduler")
     except (KeyError, ValueError, TypeError, CycleError) as exc:
         tasks = deepcopy(state["tasks"])
         affected = affected or {a["task"]["task_id"] for a in graph.values() if a["status"] == "pending"}
         for task_id in affected:
-            tasks[task_id].update(status="failed", error=f"PlanError: {exc}", requires_replan=cross_agent)
+            tasks[task_id].update(status="failed", error=f"PlanError: {exc}", requires_replan=cross_agent,
+                                  failure={"kind": "plan"})
         retained = {i: a for i, a in graph.items() if a["task"]["task_id"] not in affected or a["status"] == "success"}
         return Command(update={"tasks": tasks, "action_graph": retained}, goto="plan_agents")
 
-def check_allocation(state, batch):
+def check_allocation(state, batch, snapshot=None):
     """Vaibhav's unchanged checker over a finite registry projection; rich contracts stay in Python.
     Arguments are sent as typed values (numbers, booleans, enum strings) together with their
     declared types; the checker decodes them itself and rejects wrongly typed values."""
     if state["settings"]["checker"] != "lean":
         return
-    registry, home = state["agent_registry"], state["home_state"]
+    if snapshot is None:  # Also supports direct checker calls in tests.
+        simulator = SIMULATORS[state["request_id"]]
+        with simulator.lock:
+            snapshot = (deepcopy(simulator.home), deepcopy(simulator.reservations))
+    home, reservations = snapshot
+    registry = state["agent_registry"]
     actions = {**state["action_graph"], **{a["task_id"]: a for a in batch}}
     agents = sorted(registry)
     op_keys = [(agent, skill) for agent in agents for skill in sorted(registry[agent]["operations"])]
@@ -1184,11 +1248,9 @@ def check_allocation(state, batch):
                                  basis=[[*key(k), v] for k, v in a["evidence_versions"].items()]))
         if aid in selected_ids:
             commands.append(dict(task=task_ids[aid], device=dev_ids[target], op=op_ids[(agent, skill)], args=vals))
-    simulator = SIMULATORS[state["request_id"]]
-    with simulator.lock:
-        active = [dict(reads=[key(k) for k in r], writes=[key(k) for k in w],
-                       excl=[[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
-                  for r, w, t in simulator.reservations.values()]
+    active = [dict(reads=[key(k) for k in r], writes=[key(k) for k in w],
+                   excl=[[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
+              for r, w, t in reservations.values()]
     payload = dict(schema="dexa-alloc-request/1", request_id=uuid4().hex, auth_ttl=30,
         catalogue=dict(revision=1, ops=ops, devices=devices, load_attr=attr_ids["__target__"], meter_key=[0, 0], load_budget=0),
         graph=dict(revision=1, tasks=tasks),
@@ -1219,14 +1281,18 @@ def scheduler(state):
                 action["status"] = "blocked"
                 blocked.append(dict(task_id=action["task_id"], attempt_id=uuid4().hex, agent_id=action["agent_id"],
                                     skill_id=action["skill_id"], arguments=action.get("arguments", {}),
-                                    status="blocked", verified=False, output={}, observations={}, error="Vorgaenger fehlgeschlagen."))
+                                    status="blocked", verified=False, output={}, observations={}, error="Vorgaenger fehlgeschlagen.",
+                                    failure={"kind": "dispatch", "reason": "dependency"}))
                 changed = True
     if blocked:
-        return Command(update={"action_graph": graph, "task_results": blocked, "active_actions": []}, goto="complete_round")
+        return Command(update={"action_graph": graph, "task_results": blocked, "active_actions": [r["task_id"] for r in blocked]}, goto="complete_round")
     limit = state["settings"]["max_workers"] if state["settings"]["parallel_actions"] else 1
     ready = [a for a in graph.values() if a["status"] == "pending"
              and all(graph[d]["status"] == "success" for d in a["depends_on"])]
-    llm_scheduler = state["settings"]["scheduler_mode"] == "llm"
+    retries = [a for a in ready if a.get("execution_retries", 0)]
+    if retries:
+        ready = retries  # Direct retries also bypass the optional LLM scheduler.
+    llm_scheduler = state["settings"]["scheduler_mode"] == "llm" and not retries
     if llm_scheduler and ready:
         ids = _ask('You schedule the next execution batch. Select 1..max_actions unique action IDs from actions. '
                    'Choose useful parallel work: no shared target and no write/write or read/write conflicts. '
@@ -1240,37 +1306,51 @@ def scheduler(state):
             raise ValueError("SchedulerError: choose a nonempty batch of unique ready action IDs within max_actions.")
         ready = [graph[i] for i in ids]
     selected, rejected, targets, round_reads, round_writes = [], [], set(), set(), set()
-    for action in ready:
-        args = action["arguments"]
-        target = ("device", args["device_id"]) if "device_id" in args else ("service", args["service_id"])
-        reads, writes, _ = action_footprint(state, action)
-        if target in targets or writes & (round_reads | round_writes) or reads & round_writes:
-            if llm_scheduler:
-                raise ValueError("SchedulerError: proposed actions conflict within the batch.")
-            continue  # conservative: one simultaneous action per device/service
-        checked = validate_action({**state, "pending_actions": [action]})
-        if checked.goto != "execute_action":
-            action["status"] = "failed"
-            rejected.extend(checked.update["task_results"])
-            continue
-        action.update(checked.update["pending_actions"][0])
-        state["home_state"] = {**state["home_state"], **checked.update["home_state"]}
-        targets.add(target)
-        round_reads.update(reads)
-        round_writes.update(writes)
-        action["status"] = "running"
-        selected.append(action)
-        if len(selected) >= limit:
-            break
+    simulator = SIMULATORS[state["request_id"]]
+    with simulator.lock:
+        snapshot = (deepcopy(simulator.home), deepcopy(simulator.reservations))
+        state = {**state, "home_state": {**state["home_state"], **snapshot[0]}}
+        try:
+            for action in ready:
+                args = action["arguments"]
+                target = ("device", args["device_id"]) if "device_id" in args else ("service", args["service_id"])
+                reads, writes, _ = action_footprint(state, action)
+                if target in targets or writes & (round_reads | round_writes) or reads & round_writes:
+                    if llm_scheduler:
+                        raise ValueError("SchedulerError: proposed actions conflict within the batch.")
+                    continue  # conservative: one simultaneous action per device/service
+                checked = validate_action({**state, "pending_actions": [action]}, snapshot[0])
+                if checked.goto != "execute_action":
+                    action["status"] = checked.update["task_results"][0]["status"]
+                    rejected.extend(checked.update["task_results"])
+                    continue
+                action.update(checked.update["pending_actions"][0])
+                state["home_state"] = {**state["home_state"], **checked.update["home_state"]}
+                targets.add(target)
+                round_reads.update(action["footprint"][0])
+                round_writes.update(action["footprint"][1])
+                action["status"] = "running"
+                selected.append(action)
+                if len(selected) >= limit:
+                    break
+        except Exception:
+            for action in selected:
+                simulator.release(action["task_id"])
+            raise
     try:
         if selected:
-            check_allocation(state, selected)
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            check_allocation(state, selected, snapshot)
+    except Exception as exc:
+        for action in selected:
+            simulator.release(action["task_id"])
+        if not isinstance(exc, (ValueError, OSError, subprocess.SubprocessError)):
+            raise
         for action in selected:
             action["status"] = "failed"
             rejected.append(dict(task_id=action["task_id"], attempt_id=uuid4().hex, agent_id=action["agent_id"],
                                  skill_id=action["skill_id"], arguments=action["arguments"], status="failed", verified=False,
-                                 output={}, observations={}, error=f"AdmissionError: {exc}"))
+                                 output={}, observations={}, error=f"AdmissionError: {exc}",
+                                 failure={"kind": "dispatch", "source": "lean"}))
         selected = []
     if not selected and not rejected:
         raise ValueError("PlanError: keine ausfuehrbare Aktion; Abhaengigkeiten pruefen.")
@@ -1280,35 +1360,25 @@ def scheduler(state):
 
 def complete_round(state):
     home = {**state["home_state"], **SIMULATORS[state["request_id"]].snapshot()}
-    if not state["settings"]["dependency_graph"]:
-        task = state["pending_actions"][0]["task"]
-        result = state["task_results"][-1]
-        home.update({k: o for k, o in result["observations"].items() if k.startswith("result.")})
-        if result["status"] == "stale":
-            return Command(update={"home_state": home}, goto="validate_action")
-        remaining = state["pending_actions"][1:] if result["status"] == "success" else []
-        if remaining:
-            return Command(update={"home_state": home, "pending_actions": remaining}, goto="validate_action")
-        results = [r for r in state["task_results"] if r["task_id"].rsplit(":", 1)[0] == task["task_id"]]
-        helping = state["collaboration_request"].get("target") == task["agent_id"]
-        history = [{"agent_id": task["agent_id"], "action": task["action"],
-                    "type": "collaboration" if helping else "completion", "results": results}]
-        update = {"home_state": home, "pending_actions": [], "task_history": history}
-        if helping:
-            requester = state["collaboration_request"]["requester"]
-            return Command(update={**update, "collaboration_request": {}}, goto=requester + "_agent")
-        task = {**task, "status": "success" if all(r["status"] == "success" for r in results) else "failed"}
-        return Command(update={**update, "tasks": {**state["tasks"], task["task_id"]: task},
-                               "task_queue": state["task_queue"][1:], "pending_task": None}, goto="task_planner")
-    graph, tasks = deepcopy(state["action_graph"]), deepcopy(state["tasks"])
-    history = []
-    for result in sorted((r for r in state["task_results"] if r["task_id"] in state["active_actions"]), key=lambda r: r["task_id"]):
+    graph_mode = state["settings"]["dependency_graph"]
+    pending = deepcopy(state["pending_actions"])
+    graph = deepcopy(state["action_graph"]) if graph_mode else {pending[0]["task_id"]: pending[0]}
+    active = state["active_actions"] if graph_mode else graph.keys()
+    # The reducer retains all attempts; only the latest result changes an action's status.
+    latest = {r["task_id"]: r for r in state["task_results"] if r["task_id"] in active}
+    for result in latest.values():
         action = graph[result["task_id"]]
         action["status"] = result["status"]
+        failure = result.get("failure") or {}
+        operation = state["agent_registry"][result["agent_id"]]["operations"].get(result["skill_id"], {})
         if result["status"] == "stale":
             action["dispatch_retries"] = action.get("dispatch_retries", 0) + 1
             action["status"] = "pending" if action["dispatch_retries"] <= state["settings"]["max_repairs"] + 1 else "failed"
-        for key in ("output", "before", "evidence_versions", "valid_until", "verified"):
+        elif result["status"] == "failed" and failure.get("kind") in {"tool", "output", "postcondition"}:
+            if action.get("execution_retries", 0) < operation.get("max_retries", 0):
+                action["execution_retries"] = action.get("execution_retries", 0) + 1
+                action["status"] = "pending"
+        for key in ("output", "before", "evidence_versions", "valid_until", "verified", "error", "failure"):
             if key in result:
                 action[key] = result[key]
         if result["status"] == "success" and result["verified"]:
@@ -1324,21 +1394,43 @@ def complete_round(state):
         for key, observation in result["observations"].items():
             if key.startswith("result."):
                 home[key] = {**observation, "version": home.get(key, {}).get("version", 0) + 1}
+    if not graph_mode:
+        action = pending[0]
+        task = action["task"]
+        if action["status"] == "pending":
+            return Command(update={"home_state": home, "pending_actions": pending}, goto="validate_action")
+        remaining = pending[1:] if action["status"] == "success" else []
+        if remaining:
+            return Command(update={"home_state": home, "pending_actions": remaining}, goto="validate_action")
+        results = [r for r in state["task_results"] if r["task_id"].rsplit(":", 1)[0] == task["task_id"]]
+        helping = state["collaboration_request"].get("target") == task["agent_id"]
+        history = [{"agent_id": task["agent_id"], "action": task["action"],
+                    "type": "collaboration" if helping else "completion", "results": results}]
+        update = {"home_state": home, "pending_actions": [], "task_history": history}
+        if helping:
+            requester = state["collaboration_request"]["requester"]
+            return Command(update={**update, "collaboration_request": {}}, goto=requester + "_agent")
+        final = {r["task_id"]: r for r in results}
+        task = {**task, "status": "success" if all(r["status"] == "success" for r in final.values()) else "failed",
+                "error": action.get("error"), "failure": action.get("failure")}
+        return Command(update={**update, "tasks": {**state["tasks"], task["task_id"]: task},
+                               "task_queue": state["task_queue"][1:], "pending_task": None}, goto="task_planner")
+    tasks, history = deepcopy(state["tasks"]), []
     for task in tasks.values():
         actions = [a for a in graph.values() if a["task"]["task_id"] == task["task_id"]]
         if task["status"] != "planned" or not actions or any(a["status"] in {"pending", "running"} for a in actions):
             continue
         task["status"] = "failed" if any(a["status"] == "failed" for a in actions) else "blocked" if any(a["status"] == "blocked" for a in actions) else "success"
-        action_ids = {a["task_id"] for a in actions}
         if task["status"] == "success":
             try:
                 check_goal(state, task, [a for a in actions if a["status"] == "success"], complete=True)
                 task.pop("error", None)
+                task.pop("failure", None)
             except ValueError as exc:
-                task.update(status="failed", error=str(exc))
+                task.update(status="failed", error=str(exc), failure={"kind": "plan"})
         else:
-            task["error"] = "; ".join(r["error"] for r in state["task_results"]
-                                      if r["task_id"] in action_ids and r.get("error"))
+            failed = [a for a in actions if a["status"] == "failed"] or [a for a in actions if a["status"] == "blocked"]
+            task.update(error="; ".join(a["error"] for a in failed if a.get("error")), failure=failed[0].get("failure"))
         results = [r for r in state["task_results"] if r["task_id"].rsplit("/", 1)[0] == task["task_id"]]
         history.append({"agent_id": task["agent_id"], "action": task["action"],
                         "type": "collaboration" if task.get("parent") else "completion", "results": results})
@@ -1354,14 +1446,16 @@ def complete_round(state):
 def finish(state):
     if state["settings"]["dependency_graph"]:
         summary = [{"task_id": t["task_id"], "agent_id": t["agent_id"], "action": t["action"],
-                    "status": t["status"], "error": t.get("error"),
-                    "results": [{"skill_id": r["skill_id"], "status": r["status"], "verified": r["verified"], "output": r["output"], "error": r["error"]}
+                    "status": t["status"], "error": t.get("error"), "failure": t.get("failure"),
+                    "results": [{"skill_id": r["skill_id"], "status": r["status"], "verified": r["verified"], "output": r["output"], "error": r["error"],
+                                 "failure": r.get("failure"), "execution_retries": r.get("execution_retries", 0)}
                                 for r in state["task_results"] if r["task_id"].rsplit("/", 1)[0] == t["task_id"]]}
                    for t in state["tasks"].values()]
         return Command(update={"final_response": state["final_response"] or json.dumps(summary, ensure_ascii=False)}, goto=END)
     response = state["final_response"] or json.dumps(
         [{"agent_id": h["agent_id"], "action": h["action"],
-          "results": [{"skill_id": r["skill_id"], "status": r["status"], "output": r["output"], "error": r["error"]}
+          "results": [{"skill_id": r["skill_id"], "status": r["status"], "output": r["output"], "error": r["error"],
+                                 "failure": r.get("failure"), "execution_retries": r.get("execution_retries", 0)}
                       for r in h["results"]]} for h in state["task_history"]], ensure_ascii=False)
     return Command(update={"final_response": response}, goto=END)
 

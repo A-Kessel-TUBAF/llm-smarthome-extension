@@ -1,5 +1,7 @@
 """Beispielhaus: Inventar, unterstuetzte Skills und Anfangswerte (Wert, Einheit)."""
 
+TIME_CONFIG = {"now": None}  # None: current system time (UTC); ISO timestamp: fixed test time.
+
 HOME_DEFAULTS = {
     "rooms": {
         'living_room': {"name": 'Wohnzimmer', "initial": {"temperature_c": (20.0, 'degC')}},

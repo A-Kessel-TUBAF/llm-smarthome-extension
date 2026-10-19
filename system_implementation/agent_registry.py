@@ -5,6 +5,7 @@ AGENT_REGISTRY = {
         "capabilities": ['get_time', 'set_timer', 'set_alarm', 'start_stopwatch', 'stop_stopwatch'],
         "operations": {
             'get_time': {
+                "max_retries": 1,
                 "description": 'Experimentzeit abfragen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'timezone': {'type': 'string', 'default': 'Europe/Berlin'}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'current_time': {'type': 'string', 'format': 'date-time'}, 'timezone': {'type': 'string', 'minLength': 1}},
@@ -13,6 +14,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'clock_result', 'operation': 'get_time'}],
             },
             'set_timer': {
+                "max_retries": 0,
                 "description": 'Neuen Timer anlegen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'duration_seconds': {'type': 'integer', 'minimum': 1}, 'label': {'type': 'string', 'default': ''}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'timer_id': {'type': 'string', 'minLength': 1}, 'duration_seconds': {'type': 'integer', 'minimum': 1}, 'due_at': {'type': 'string', 'format': 'date-time'}},
@@ -21,6 +23,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'clock_result', 'operation': 'set_timer'}],
             },
             'set_alarm': {
+                "max_retries": 0,
                 "description": 'Neuen Wecker anlegen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'at': {'type': 'string', 'format': 'date-time'}, 'label': {'type': 'string', 'default': ''}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'alarm_id': {'type': 'string', 'minLength': 1}, 'at': {'type': 'string', 'format': 'date-time'}},
@@ -29,6 +32,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'clock_result', 'operation': 'set_alarm'}],
             },
             'start_stopwatch': {
+                "max_retries": 0,
                 "description": 'Gestoppte Stoppuhr starten oder fortsetzen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'running': {'const': True}, 'started_at': {'type': 'string', 'format': 'date-time'}, 'elapsed_seconds': {'type': 'number', 'minimum': 0}},
@@ -37,6 +41,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'clock_result', 'operation': 'start_stopwatch'}],
             },
             'stop_stopwatch': {
+                "max_retries": 0,
                 "description": 'Laufende Stoppuhr stoppen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'running': {'const': False}, 'elapsed_seconds': {'type': 'number', 'minimum': 0}},
@@ -52,6 +57,7 @@ AGENT_REGISTRY = {
         "capabilities": ['list_events', 'create_event', 'delete_event'],
         "operations": {
             'list_events': {
+                "max_retries": 1,
                 "description": 'Termine im optionalen Zeitfenster abfragen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'start': {'type': ['string', 'null'], 'format': 'date-time', 'default': None}, 'end': {'type': ['string', 'null'], 'format': 'date-time', 'default': None}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'events': {'type': 'array', 'items': {'type': 'object', 'properties': {'event_id': {'type': 'string', 'minLength': 1}, 'title': {'type': 'string', 'minLength': 1}, 'start': {'type': 'string', 'format': 'date-time'}, 'end': {'type': 'string', 'format': 'date-time'}, 'location': {'type': 'string'}}, 'required': ['event_id', 'title', 'start', 'end', 'location'], 'additionalProperties': False}}},
@@ -60,6 +66,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'events_selected', 'state': 'service.{service_id}.events'}],
             },
             'create_event': {
+                "max_retries": 0,
                 "description": 'Termin anlegen; Ueberschneidungen sind erlaubt.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'title': {'type': 'string', 'minLength': 1}, 'start': {'type': 'string', 'format': 'date-time'}, 'end': {'type': 'string', 'format': 'date-time'}, 'location': {'type': 'string', 'default': ''}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'event': {'type': 'object', 'properties': {'event_id': {'type': 'string', 'minLength': 1}, 'title': {'type': 'string', 'minLength': 1}, 'start': {'type': 'string', 'format': 'date-time'}, 'end': {'type': 'string', 'format': 'date-time'}, 'location': {'type': 'string'}}, 'required': ['event_id', 'title', 'start', 'end', 'location'], 'additionalProperties': False}},
@@ -68,6 +75,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'event_added', 'state': 'service.{service_id}.events'}],
             },
             'delete_event': {
+                "max_retries": 0,
                 "description": 'Termin ueber seine ID entfernen.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'event_id': {'type': 'string', 'minLength': 1}},
                 "output": {'service_id': {'type': 'string', 'minLength': 1}, 'deleted_event_id': {'type': 'string', 'minLength': 1}},
@@ -83,9 +91,10 @@ AGENT_REGISTRY = {
         "capabilities": ['search'],
         "operations": {
             'search': {
+                "max_retries": 1,
                 "description": 'Informationen zu einer Suchanfrage liefern.',
                 "parameters": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'max_results': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 5}},
-                "output": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'provider': {'enum': ['simulation', 'backend']}, 'results': {'type': 'array', 'items': {'type': 'object', 'properties': {'title': {'type': 'string', 'minLength': 1}, 'url': {'type': ['string', 'null'], 'format': 'uri'}, 'snippet': {'type': 'string'}, "content": {"type": "string"}, "data": {"type": "object"},}, 'required': ['title', 'url', 'snippet'], 'additionalProperties': False}}},
+                "output": {'service_id': {'type': 'string', 'minLength': 1}, 'query': {'type': 'string', 'minLength': 1}, 'provider': {'enum': ['simulation', 'backend']}, 'results': {'type': 'array', 'items': {'type': 'object', 'properties': {'title': {'type': 'string', 'minLength': 1}, 'url': {'type': ['string', 'null'], 'format': 'uri'}, 'snippet': {'type': 'string'}, 'content': {'type': 'string'}, 'data': {'type': 'object'}}, 'required': ['title', 'url', 'snippet'], 'additionalProperties': False}}},
                 "reads": [], "writes": [],
                 "preconditions": [{'context': 'search_available', 'equals': True}],
                 "postconditions": [{'output': 'service_id', 'equals_arg': 'service_id'}, {'rule': 'search_matches_source'}],
@@ -98,6 +107,7 @@ AGENT_REGISTRY = {
         "capabilities": ['turn_on', 'turn_off', 'show_content'],
         "operations": {
             'turn_on': {
+                "max_retries": 1,
                 "description": 'Geraet einschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': True}},
@@ -106,6 +116,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.power', 'equals': True}],
             },
             'turn_off': {
+                "max_retries": 1,
                 "description": 'Geraet ausschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': False}, 'current_content': {'type': 'null'}},
@@ -114,6 +125,8 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.current_content', 'equals_output': 'current_content'}, {'state': 'device.{device_id}.power', 'equals': False}, {'state': 'device.{device_id}.current_content', 'equals': None}],
             },
             'show_content': {
+                "max_retries": 1,
+                "auto_prepare": {"device.{device_id}.power": "turn_on"},
                 "description": 'Inhalt auf eingeschaltetem TV anzeigen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'content_type': {'enum': ['text', 'url', 'image_url', 'video_url']}, 'content': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'current_content': {'type': 'object', 'properties': {'type': {'enum': ['text', 'url', 'image_url', 'video_url']}, 'value': {'type': 'string', 'minLength': 1}}, 'required': ['type', 'value'], 'additionalProperties': False}},
@@ -129,6 +142,7 @@ AGENT_REGISTRY = {
         "capabilities": ['get_inventory'],
         "operations": {
             'get_inventory': {
+                "max_retries": 1,
                 "description": 'Bekannten Lebensmittelbestand abfragen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'inventory': {'type': 'array', 'items': {'type': 'object', 'properties': {'item': {'type': 'string', 'minLength': 1}, 'quantity': {'type': 'number', 'minimum': 0}, 'unit': {'type': 'string', 'minLength': 1}}, 'required': ['item', 'quantity', 'unit'], 'additionalProperties': False}}},
@@ -144,6 +158,7 @@ AGENT_REGISTRY = {
         "capabilities": ['turn_on', 'turn_off', 'set_brightness', 'set_color_temperature'],
         "operations": {
             'turn_on': {
+                "max_retries": 1,
                 "description": 'Geraet einschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': True}},
@@ -152,6 +167,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.power', 'equals': True}],
             },
             'turn_off': {
+                "max_retries": 1,
                 "description": 'Geraet ausschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': False}},
@@ -160,6 +176,8 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.power', 'equals': False}],
             },
             'set_brightness': {
+                "max_retries": 1,
+                "auto_prepare": {"device.{device_id}.power": "turn_on"},
                 "description": 'Helligkeit einer eingeschalteten dimmbaren Lampe setzen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'brightness_pct': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'brightness_pct': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
@@ -168,6 +186,8 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.brightness_pct', 'equals_output': 'brightness_pct'}, {'state': 'device.{device_id}.brightness_pct', 'equals_arg': 'brightness_pct'}, {'state': 'device.{device_id}.power', 'equals': True}],
             },
             'set_color_temperature': {
+                "max_retries": 1,
+                "auto_prepare": {"device.{device_id}.power": "turn_on"},
                 "description": 'Farbtemperatur einer eingeschalteten Lampe setzen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'color_temperature_k': {'type': 'integer', 'minimum': 2000, 'maximum': 6500}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'color_temperature_k': {'type': 'integer', 'minimum': 2000, 'maximum': 6500}},
@@ -183,6 +203,7 @@ AGENT_REGISTRY = {
         "capabilities": ['set_temperature', 'set_mode'],
         "operations": {
             'set_temperature': {
+                "max_retries": 1,
                 "description": 'Gespeicherten Temperatur-Sollwert setzen, auch bei Modus off.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'temperature_c': {'type': 'number', 'minimum': 5, 'maximum': 35}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'target_temperature_c': {'type': 'number', 'minimum': 5, 'maximum': 35}},
@@ -191,6 +212,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.target_temperature_c', 'equals_output': 'target_temperature_c'}, {'state': 'device.{device_id}.target_temperature_c', 'equals_arg': 'temperature_c'}],
             },
             'set_mode': {
+                "max_retries": 1,
                 "description": 'Betriebsmodus des simulierten Thermostats setzen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'mode': {'enum': ['off', 'heat', 'cool', 'auto']}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'mode': {'enum': ['off', 'heat', 'cool', 'auto']}},
@@ -206,6 +228,7 @@ AGENT_REGISTRY = {
         "capabilities": ['turn_on', 'turn_off', 'set_volume', 'play', 'pause', 'stop'],
         "operations": {
             'turn_on': {
+                "max_retries": 1,
                 "description": 'Geraet einschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': True}},
@@ -214,6 +237,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.power', 'equals': True}],
             },
             'turn_off': {
+                "max_retries": 1,
                 "description": 'Geraet ausschalten.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'power': {'const': False}, 'playback_status': {'const': 'stopped'}, 'current_track': {'type': 'null'}},
@@ -222,7 +246,8 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.power', 'equals_output': 'power'}, {'state': 'device.{device_id}.playback_status', 'equals_output': 'playback_status'}, {'state': 'device.{device_id}.current_track', 'equals_output': 'current_track'}, {'state': 'device.{device_id}.power', 'equals': False}, {'state': 'device.{device_id}.playback_status', 'equals': 'stopped'}, {'state': 'device.{device_id}.current_track', 'equals': None}],
             },
             'set_volume': {
-                "description": 'Gespeicherte Lautstaerke setzen, auch bei ausgeschaltetem Geraet.',
+                "max_retries": 1,
+                "description": 'Gespeicherte Lautstaerke setzen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'volume_pct': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'volume_pct': {'type': 'integer', 'minimum': 0, 'maximum': 100}},
                 "reads": [], "writes": ['device.{device_id}.volume_pct'],
@@ -230,6 +255,8 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.volume_pct', 'equals_output': 'volume_pct'}, {'state': 'device.{device_id}.volume_pct', 'equals_arg': 'volume_pct'}],
             },
             'play': {
+                "max_retries": 1,
+                "auto_prepare": {"device.{device_id}.power": "turn_on"},
                 "description": 'Angeforderten Titel in der Simulation abspielen.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}, 'track': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'playback_status': {'const': 'playing'}, 'current_track': {'type': 'string', 'minLength': 1}},
@@ -238,6 +265,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.playback_status', 'equals_output': 'playback_status'}, {'state': 'device.{device_id}.current_track', 'equals_output': 'current_track'}, {'state': 'device.{device_id}.power', 'equals': True}, {'state': 'device.{device_id}.playback_status', 'equals': 'playing'}, {'state': 'device.{device_id}.current_track', 'equals_arg': 'track'}],
             },
             'pause': {
+                "max_retries": 1,
                 "description": 'Laufende Wiedergabe pausieren.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'playback_status': {'const': 'paused'}, 'current_track': {'type': 'string', 'minLength': 1}},
@@ -246,6 +274,7 @@ AGENT_REGISTRY = {
                 "postconditions": [{'output': 'device_id', 'equals_arg': 'device_id'}, {'state': 'device.{device_id}.playback_status', 'equals_output': 'playback_status'}, {'state': 'device.{device_id}.playback_status', 'equals': 'paused'}, {'output': 'current_track', 'equals_before': 'device.{device_id}.current_track'}],
             },
             'stop': {
+                "max_retries": 1,
                 "description": 'Wiedergabe stoppen und Titel leeren.',
                 "parameters": {'device_id': {'type': 'string', 'minLength': 1}},
                 "output": {'device_id': {'type': 'string', 'minLength': 1}, 'playback_status': {'const': 'stopped'}, 'current_track': {'type': 'null'}},

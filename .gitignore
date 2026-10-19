@@ -4,6 +4,7 @@ __pycache__/
 system_implementation/.env
 system_implementation/.env.example
 
+system_implementation/logs/
 logs/
 
 .venv/
