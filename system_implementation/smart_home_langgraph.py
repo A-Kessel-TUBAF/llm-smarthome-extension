@@ -4,6 +4,7 @@ import argparse
 import math
 import os
 import operator
+import tomllib
 import subprocess
 import time
 from threading import RLock
@@ -26,7 +27,53 @@ from langgraph.types import Command, Send, interrupt
 from agent_registry import AGENT_REGISTRY
 from home_defaults import HOME_DEFAULTS, SEARCH_FIXTURES
 
-SCHEDULER_MODE = os.getenv("SCHEDULER_MODE", "python")  # Central ablation switch, also read from .env.
+CONFIG_PATH = Path(__file__).with_name("experiment_config.toml")
+SUPPORTED_BENCHMARKS = {"dexa", "homebench"}
+
+
+def load_settings(path=None):
+    with Path(path or CONFIG_PATH).open("rb") as file:
+        return tomllib.load(file)
+
+
+def resolve_settings(overrides=None, *, config_path=None):
+    settings = load_settings(config_path)
+    settings.update(overrides or {})
+    if not settings["repair_enabled"]:
+        for key in ("action_retries", "dispatch_retries", "local_repair", "planner_replan"):
+            settings[key] = False
+    if not settings["local_repair"]:
+        settings["max_repairs"] = 0
+    if not settings["planner_replan"]:
+        settings["max_replans"] = 0
+    return settings
+
+
+def add_settings_arguments(parser):
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="Settings TOML")
+    for key, value in load_settings().items():
+        flag = key.replace("_", "-")
+        flag = {"repair_enabled": "repair", "intent_analysis_enabled": "intent-analysis",
+                "scheduler_mode": "scheduler", "recursion_limit": "max-supersteps"}.get(key, flag)
+        options = dict(dest=key, default=None)
+        if isinstance(value, bool):
+            options["action"] = argparse.BooleanOptionalAction
+        else:
+            options["type"] = type(value)
+        parser.add_argument("--" + flag, **options)
+    parser.add_argument("--lean-executable", default=None)
+    parser.add_argument("--sequential", action="store_true")
+
+
+def settings_from_args(args):
+    overrides = {key: getattr(args, key) for key in load_settings() if getattr(args, key, None) is not None}
+    if args.sequential:
+        overrides.update(parallel_agents=False, parallel_actions=False)
+    if args.lean_executable:
+        overrides["lean_executable"] = args.lean_executable
+    return overrides
+
+
 
 # Live objects stay outside LangGraph checkpoints: workers share one simulator per request.
 SIMULATORS = {}
@@ -118,6 +165,7 @@ class SmartHomeState(TypedDict):
     settings: dict
     simulation_data: dict
     repair_context: dict
+    rejected_requests: list[dict]
 
 # Timestamps/source are assigned by Python, never by the LLM.
 def make_observation(value, *, source, unit=None, observed_at=None, version=0):
@@ -125,15 +173,18 @@ def make_observation(value, *, source, unit=None, observed_at=None, version=0):
             "observed_at": observed_at or datetime.now(timezone.utc).isoformat(), "version": version}
 
 def create_initial_state(observations=None, *, home_config=None, use_defaults=True,
-                         observed_at=None, disabled_agents=(), include_operations=True,
-                         include_conditions=True, simulation_data=None, validate_contracts=True,
-                          dependency_graph=True, parallel_agents=True, parallel_actions=True,
-                          intent_analysis_enabled=False, check_outcomes=True, max_repairs=1,
-                          max_replans=1, max_workers=4, checker="python", lean_executable=None,
-                          search_mode="fixtures", scheduler_mode=None):
-    scheduler_mode = scheduler_mode or SCHEDULER_MODE
+                         observed_at=None, disabled_agents=(), simulation_data=None,
+                         agent_registry=None, tool_bindings=None, config_path=None, **overrides):
+    settings = resolve_settings(overrides, config_path=config_path)
+    validate_contracts = settings["validate_contracts"]
+    dependency_graph = settings["dependency_graph"]
+    check_outcomes = settings["check_outcomes"]
+    checker = settings["checker"]
+    search_mode = settings["search_mode"]
+    scheduler_mode = settings["scheduler_mode"]
+    lean_executable = settings.get("lean_executable")
     if scheduler_mode not in {"python", "llm"}:
-        raise ValueError("SCHEDULER_MODE must be python or llm.")
+        raise ValueError("scheduler_mode must be python or llm.")
     if search_mode not in {"fixtures", "live"}:
         raise ValueError("search_mode must be fixtures or live.")
     simulation_data = deepcopy(simulation_data or {})
@@ -160,24 +211,19 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
                     home[f"{scope}.{entity_id}.{prop}"] = make_observation(
                         value, source="simulation:initial", unit=unit, observed_at=stamp)
     home.update(deepcopy(observations or {}))
-    registry = deepcopy(AGENT_REGISTRY)
+    registry = deepcopy(AGENT_REGISTRY if agent_registry is None else agent_registry)
     for agent in disabled_agents:
         registry[agent]["enabled"] = False
     request_id = uuid4().hex
     SIMULATORS[request_id] = Simulator(home)
+    SIMULATORS[request_id].tools = {**TOOLS, **(tool_bindings or {})}
     return dict(original_user_input="", request_id=request_id, infos=[], key_modifiers=[],
                 task_queue=[], tasks={}, task_results=[], home_config=config, home_state=home,
                 agent_registry=registry, collaboration_request={}, pending_task=None, pending_actions=[],
                 action_graph={}, planning_task={}, planning_updates=[], active_actions=[],
-                task_history=[], final_response="", repair_context={}, simulation_data=deepcopy(simulation_data or {}),
-                settings={"version": "V3" if dependency_graph else "V2" if validate_contracts else "V1",
-                            "dependency_graph": dependency_graph, "parallel_agents": parallel_agents,
-                            "parallel_actions": parallel_actions, "scheduler_mode": scheduler_mode,
-                             "intent_analysis_enabled": intent_analysis_enabled, "check_outcomes": check_outcomes,
-                             "max_repairs": max_repairs, "max_replans": max_replans, "replans": 0,
-                             "max_workers": max_workers, "checker": checker, "lean_executable": lean_executable,
-                            "validate_contracts": validate_contracts, "include_operations": include_operations,
-                            "include_conditions": include_conditions})
+                task_history=[], final_response="", repair_context={}, rejected_requests=[], simulation_data=deepcopy(simulation_data or {}),
+                settings={**settings, "version": "V3" if dependency_graph else "V2" if validate_contracts else "V1",
+                          "replans": 0, "lean_executable": lean_executable})
 
 def get_available_agents(state, *, include_operations=None):
     if include_operations is None:
@@ -554,7 +600,8 @@ def validate_action(state, home=None):
                 json.dumps(args, allow_nan=False)
             elif set(definition["parameters"]) - args.keys():
                 raise ValueError("Pflichtargument fehlt.")
-            check_goal(state, task, [action])
+            if state["settings"]["validate_contracts"]:
+                check_goal(state, task, [action])
             target_key = "device_id" if "device_id" in definition["parameters"] else "service_id"
             section = "devices" if target_key == "device_id" else "services"
             target = state["home_config"][section][args[target_key]]
@@ -563,6 +610,9 @@ def validate_action(state, home=None):
             if target_key == "device_id" and task.get("scope"):
                 if args[target_key] not in task["scope"] and target.get("room_id") not in task["scope"]:
                     raise ValueError("Geraet liegt ausserhalb des zugewiesenen Auftragsbereichs.")
+            if state["settings"]["validate_contracts"] and skill in target.get("parameters", {}):
+                Draft202012Validator({"type": "object", "properties": target["parameters"][skill],
+                    "required": list(target["parameters"][skill]), "additionalProperties": False}).validate(args)
             now = state["simulation_data"].get("now") or datetime.now(timezone.utc).isoformat()
             context = {"now": now, "mode": "simulation",
                        "search_available": state["simulation_data"].get("search_available", True)}
@@ -614,7 +664,7 @@ def execute_action(state):
         parameters = state["agent_registry"][task["agent_id"]]["operations"][skill]["parameters"]
         target_key = "device_id" if "device_id" in parameters else "service_id"
         failure = {"kind": "tool"}
-        output = TOOLS[(task["agent_id"], skill)](
+        output = simulator.tools[(task["agent_id"], skill)](
             skill, args, simulator, action["now"], {**state["simulation_data"], "_action_id": action["task_id"]})
         failure = {"kind": "output"}
         observed = simulator.snapshot()
@@ -730,6 +780,8 @@ def task_planner(state):
                       'Keep task.goal unchanged during repair; prerequisites alone do not complete its outcomes. '
                       'The original_input is authoritative; any intent_analysis is optional, fallible supporting context. '
                       'Check that EVERY requested goal is represented. Do not invent capabilities or extra goals. '
+                      'For invalid user subrequests add rejected_requests=[{"request":"original subrequest", "reason":"why unavailable"}]. '
+                      'Continue planning valid subrequests. A planning or execution error is not an invalid user subrequest. '
                       'When repair is present, replace every ID in repair.task_ids, keeping IDs and original goals. Do not renumber tasks. '
                       'You may add information-only tasks with kind="information" and parent=<affected task ID>. '
                       'Preserve dependencies on retained tasks; do not repeat completed unrelated goals. '
@@ -739,6 +791,9 @@ def task_planner(state):
                       '"requirements": [{"skill_id": "turn_on", "arguments": {"device_id": "light_lr_ceiling"}}]}], '
                       '"response": "reason if no tasks"}. The actions field is optional.',
                       role="planner", expected={"task_queue": list}, **context)
+        rejected = result.get("rejected_requests", [])
+        if not isinstance(rejected, list) or any(not isinstance(r, dict) or not r.get("request") or not r.get("reason") for r in rejected):
+            raise ValueError("rejected_requests needs request/reason objects.")
         queue = []
         for index, raw in enumerate(result["task_queue"]):
             if not isinstance(raw, dict) or not isinstance(raw.get("action"), str) or not raw["action"].strip():
@@ -789,7 +844,7 @@ def task_planner(state):
                     t["generation"] = state["tasks"].get(t["task_id"], {}).get("generation", 0) + 1
                 return Command(update={"tasks": {**state["tasks"], **{t["task_id"]: t for t in queue}},
                                        "action_graph": retained, "repair_context": {}, "settings": settings}, goto="plan_agents")
-        return Command(update={"task_queue": queue, "tasks": {t["task_id"]: t for t in queue},
+        return Command(update={"rejected_requests": rejected, "task_queue": queue, "tasks": {t["task_id"]: t for t in queue},
                                "final_response": result.get("response", "") if not queue else ""},
                        goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
     except (ValueError, KeyError, TypeError) as exc:
@@ -799,7 +854,7 @@ def task_planner(state):
                  "failure": {"kind": "plan"}}, ensure_ascii=False)}, goto="finish")
         error = f"PlannerRepairError: {exc}"
         settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
-        if settings["replans"] < settings["max_replans"]:
+        if settings["planner_replan"] and settings["replans"] < settings["max_replans"]:
             return Command(update={"settings": settings, "repair_context": {**repair, "reason": error}},
                            goto="task_planner")
         tasks = deepcopy(state["tasks"])
@@ -962,8 +1017,8 @@ def plan_agents(state):
         # Every retained success was rechecked above; only the domain agent replans missing steps.
         own = {i: a for i, a in graph.items() if a["task"]["task_id"] == task["task_id"]}
         graph = {i: a for i, a in graph.items() if i not in own or a["status"] == "success"}
-        if task.get("requires_replan") or task.get("repairs", 0) >= state["settings"]["max_repairs"]:
-            if not task.get("parent") and state["settings"]["replans"] < state["settings"]["max_replans"]:
+        if not state["settings"]["local_repair"] or task.get("requires_replan") or task.get("repairs", 0) >= state["settings"]["max_repairs"]:
+            if state["settings"]["planner_replan"] and not task.get("parent") and state["settings"]["replans"] < state["settings"]["max_replans"]:
                 affected = {task["task_id"]} | {t["task_id"] for t in tasks.values()
                                                if t["status"] == "failed" and t.get("requires_replan")}
                 while True:
@@ -1088,7 +1143,7 @@ def validate_plan(state):
         # Only explicitly approved prerequisites; preserve existing ordering and goals.
         for action_id in tuple(TopologicalSorter({i: a["depends_on"] for i, a in graph.items()}).static_order()):
             action = graph[action_id]
-            if action["status"] != "pending" or not state["settings"]["validate_contracts"]:
+            if action["status"] != "pending" or not state["settings"]["validate_contracts"] or not state["settings"]["auto_prepare"]:
                 continue
             affected = {action["task"]["task_id"]}
             args, agent = action["arguments"], action["agent_id"]
@@ -1373,9 +1428,9 @@ def complete_round(state):
         operation = state["agent_registry"][result["agent_id"]]["operations"].get(result["skill_id"], {})
         if result["status"] == "stale":
             action["dispatch_retries"] = action.get("dispatch_retries", 0) + 1
-            action["status"] = "pending" if action["dispatch_retries"] <= state["settings"]["max_repairs"] + 1 else "failed"
+            action["status"] = "pending" if state["settings"]["dispatch_retries"] and action["dispatch_retries"] <= state["settings"]["max_dispatch_retries"] else "failed"
         elif result["status"] == "failed" and failure.get("kind") in {"tool", "output", "postcondition"}:
-            if action.get("execution_retries", 0) < operation.get("max_retries", 0):
+            if state["settings"]["action_retries"] and action.get("execution_retries", 0) < operation.get("max_retries", 0):
                 action["execution_retries"] = action.get("execution_retries", 0) + 1
                 action["status"] = "pending"
         for key in ("output", "before", "evidence_versions", "valid_until", "verified", "error", "failure"):
@@ -1459,36 +1514,56 @@ def finish(state):
                       for r in h["results"]]} for h in state["task_history"]], ensure_ascii=False)
     return Command(update={"final_response": response}, goto=END)
 
-# Eight independent graph nodes; shared implementation avoids eight code copies.
+# All domain nodes use the same implementation with their selected registry.
 def _node(agent):
     def run(state):
         return _agent(state, agent)
     run.__name__ = agent + "_agent"
     return run
 
-builder = StateGraph(SmartHomeState)
-for name, node in {"human": human, "intent_analysis": intent_analysis, "task_planner": task_planner,
-                   "validate_action": validate_action, "execute_action": execute_action,
-                   "plan_agents": plan_agents, "collect_plans": collect_plans, "validate_plan": validate_plan,
-                   "scheduler": scheduler,
-                   "complete_round": complete_round, "finish": finish}.items():
-    builder.add_node(name, node)
-for agent in AGENT_REGISTRY:
-    node = _node(agent)
-    globals()[node.__name__] = node
-    builder.add_node(node.__name__, node)
-builder.add_edge(START, "human")
-graph = builder.compile(checkpointer=MemorySaver())
+def build_graph(registry):
+    builder = StateGraph(SmartHomeState)
+    for name, node in {"human": human, "intent_analysis": intent_analysis, "task_planner": task_planner,
+                       "validate_action": validate_action, "execute_action": execute_action,
+                       "plan_agents": plan_agents, "collect_plans": collect_plans, "validate_plan": validate_plan,
+                       "scheduler": scheduler,
+                       "complete_round": complete_round, "finish": finish}.items():
+        builder.add_node(name, node)
+    for agent in registry:
+        node = _node(agent)
+        builder.add_node(node.__name__, node)
+    builder.add_edge(START, "human")
+    return builder.compile(checkpointer=MemorySaver())
+
+
+graph = build_graph(AGENT_REGISTRY)
+
 
 def run_request(text, **setup):
-    config = {"configurable": {"thread_id": uuid4().hex}, "recursion_limit": 100}
     state = create_initial_state(**setup)
+    config = {"configurable": {"thread_id": uuid4().hex}, "recursion_limit": state["settings"]["recursion_limit"]}
+    selected_graph = build_graph(state["agent_registry"]) if "agent_registry" in setup else graph
+    proposals = {}
     try:
-        for _ in graph.stream(state, config):
+        yield {"experiment_config": {"settings": state["settings"]}}
+        for _ in selected_graph.stream(state, config):
             pass
-        yield from graph.stream(Command(resume=text), config)
+        for event in selected_graph.stream(Command(resume=text), config):
+            for update in event.values():
+                if isinstance(update, dict):
+                    actions = list(update.get("action_graph", {}).values()) + update.get("pending_actions", [])
+                    for action in actions:
+                        if action["task_id"] not in proposals:
+                            proposals[action["task_id"]] = deepcopy(action)
+            yield event
+        final = selected_graph.get_state(config).values
+        yield {"episode_result": {"proposed_actions": list(proposals.values()),
+                  "task_results": final["task_results"], "rejected_requests": final["rejected_requests"],
+                  "tasks": final["tasks"], "final_response": final["final_response"]}}
     finally:
         SIMULATORS.pop(state["request_id"], None)
+        selected_graph.checkpointer.delete_thread(config["configurable"]["thread_id"])
+
 
 def interactive(**setup):
     while True:
@@ -1504,16 +1579,7 @@ def interactive(**setup):
             print(f"Time: {time.perf_counter() - started:.2f}s")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--intent-analysis", action="store_true", help="Enable the optional intent analyser")
-    parser.add_argument("--search-mode", choices=("fixtures", "live"), default="fixtures")
-    parser.add_argument("--scheduler", choices=("python", "llm"), default=SCHEDULER_MODE)
-    parser.add_argument("--checker", choices=("python", "lean"), default="python")
-    parser.add_argument("--sequential", action="store_true", help="Disable agent/action parallelism")
-    parser.add_argument("--no-operations", action="store_true", help="Omit operation definitions from LLM prompts (ablation)")
-    parser.add_argument("--no-conditions", action="store_true", help="Omit operation conditions from LLM prompts (ablation)")
+    parser = argparse.ArgumentParser(description="Smart home interactive session")
+    add_settings_arguments(parser)
     args = parser.parse_args()
-    interactive(intent_analysis_enabled=args.intent_analysis, checker=args.checker,
-                search_mode=args.search_mode, scheduler_mode=args.scheduler,
-                parallel_agents=not args.sequential, parallel_actions=not args.sequential,
-                include_operations=not args.no_operations, include_conditions=not args.no_conditions)
+    interactive(config_path=args.config, **settings_from_args(args))

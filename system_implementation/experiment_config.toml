@@ -1,0 +1,27 @@
+# Preparation and recovery (repair_enabled=false overrides the four recovery switches).
+auto_prepare = true
+repair_enabled = true
+local_repair = true
+planner_replan = true
+action_retries = true
+dispatch_retries = true
+max_repairs = 1
+max_replans = 1
+max_dispatch_retries = 2
+
+# Execution
+parallel_agents = true
+parallel_actions = true
+dependency_graph = true
+scheduler_mode = "python"
+max_workers = 4
+recursion_limit = 200
+
+# Additional components and prompt contents
+intent_analysis_enabled = false
+checker = "python"
+validate_contracts = true
+check_outcomes = true
+include_operations = true
+include_conditions = true
+search_mode = "fixtures"

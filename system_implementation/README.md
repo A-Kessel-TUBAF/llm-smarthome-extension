@@ -3,6 +3,38 @@
 
 Multi-agent system for smart home scenarios using LangGraph and google/gemma-2-9B.
 
+
+## Experiment configuration
+
+Execution defaults are plain values in `experiment_config.toml` (Python 3.11+).
+Loading, overrides and recovery behavior live in `smart_home_langgraph.py`.
+`run_experiments.py` contains the seven experiment runs in its `RUNS` list:
+system file and only the settings that differ from the defaults.
+There is no `--variant` argument. Model selection and credentials remain in
+`llm_config.py` / `.env`.
+
+The project's `run_benchmark.py` handles only our DEXA benchmark. External
+adapters and their device catalogues live in `external_benchmarks/`.
+System selection and experiment metadata are handled in `run_experiments.py`.
+The small standalone CLIs reuse argument definitions from `smart_home_langgraph.py`.
+
+See [EXPERIMENTS.md](EXPERIMENTS.md) for commands, outputs, additional systems,
+and the limitations of the original implementation for HomeBench and SimuHome.
+
+```bash
+python smart_home_langgraph.py --no-repair
+python external_benchmarks/run_benchmark.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
+python run_experiments.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
+```
+
+The current seven-run matrix targets HomeBench and uses a minimal sequential
+baseline instead of the original. SimuHome and the Home Assistant Dataset will
+be integrated later; the project benchmark remains available separately.
+
+The DEXA dataset from the original archive is included in `benchmark/`.
+HomeBench data must be downloaded separately. Lean sources are included;
+retain your existing compiled `lean/.lake/` directory or run `cd lean && lake build`.
+
 ### Installation
 
 If you don't have Ollama installed:
@@ -164,4 +196,11 @@ To add a new device agent:
 - [LangGraph Documentation](https://docs.langchain.com/oss/python/langgraph/overview) - Framework reference
 - [Ollama Documentation](https://ollama.ai/docs) - Model serving
 - [Gemma Documentation](https://ai.google.dev/gemma) - Model details
+## Replacing the previous package
 
+Remove the old `adapters/homebench.py` and top-level `agent_registry_homebench.py`
+when adopting this folder layout. They moved to `external_benchmarks/`; no aliases
+are needed. An old `experiment_config.py` is also unused. Preserve your `.env`
+and the compiled contents of `lean/.lake/`.
+
+If you copied an earlier generated package, delete its obsolete `experiment_support.py`.
