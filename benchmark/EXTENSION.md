@@ -121,7 +121,7 @@ metrics, per case and averaged per category and dimension:
 | Recovery locality | share of `must_complete` intents completed after the failure | logs |
 | Recovery correctness | no `must_replan` intent executed with missing information | logs |
 | Recovery cost | agent calls after the failure, compared with replanning everything | logs |
-| Plan validity | share of planned batches accepted by the Lean checker (`formal/`, `allocation-check`), and the rejection reasons | structured plans |
+| Plan validity | share of planned batches accepted by the Lean checker (`system_implementation/lean`, called by `check_allocation`), and the rejection reasons | structured plans |
 | Cost | LLM calls, tokens, wall-clock time | logs |
 
 Most of these need structured logs (task, agent, start and end time, inputs received from other
