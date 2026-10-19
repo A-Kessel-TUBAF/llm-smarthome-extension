@@ -26,5 +26,3 @@ Or execute the configurations in `run_experiments.py`:
 python run_experiments.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
 ```
 
-There is no SimuHome adapter yet. The unchanged original is supported on our DEXA
-inputs only; it cannot be scored on HomeBench through this interface.

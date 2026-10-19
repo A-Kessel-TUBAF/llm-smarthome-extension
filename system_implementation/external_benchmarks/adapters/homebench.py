@@ -9,6 +9,7 @@ import json
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
+from llm_config import summarize_calls
 
 from external_benchmarks.agent_registry_homebench import build_home, execute
 
@@ -84,6 +85,11 @@ def summarize(rows):
             "precision": precision, "recall": recall,
             "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0,
             "errors": sum(row.get("error") is not None for row in rows),
+            "runtime_errors": sum(row.get("exception") is not None for row in rows),
+            "planning_failures": sum(any(t["kind"] == "plan" for t in row.get("report", {}).get("task_failures", [])) for row in rows),
+            "action_failures": sum(any(t["kind"] in {"precondition", "tool", "output", "postcondition", "dispatch"}
+                                       for t in row.get("report", {}).get("task_failures", [])) for row in rows),
+            **summarize_calls([call for row in rows for call in row.get("report", {}).get("llm_calls", [])]),
             "mean_latency_s": sum(row["latency_s"] for row in rows) / count if count else 0}
 
 
@@ -125,6 +131,8 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
         elapsed = time.perf_counter() - started
+        exception = error
+        error = error or report.get("error")
         try:
             predicted = prediction(report, environment["home_config"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -132,9 +140,10 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
             predicted = "{}"
         row = {"id": case["id"], "home_id": case["home_id"], "category": case["type"], "input": case["input"],
                "prediction": predicted, "expected": case["output"], "score": score(predicted, case["output"]),
-               "latency_s": elapsed, "error": error, "settings": effective, "report": report}
+               "latency_s": elapsed, "error": error, "exception": exception, "settings": effective, "report": report,
+               "model_usage": report.get("model_usage", summarize_calls([]))}
         # A crashed run cannot pass, even if a future empty-output task is added.
-        if error:
+        if exception:
             row["score"]["exact_match"] = False
         rows.append(row)
         (output / f"{case['id']}.json").write_text(json.dumps(row, ensure_ascii=False, indent=2), encoding="utf-8")

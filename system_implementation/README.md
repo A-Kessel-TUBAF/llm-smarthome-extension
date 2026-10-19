@@ -27,13 +27,14 @@ python external_benchmarks/run_benchmark.py --benchmark homebench --benchmark-pa
 python run_experiments.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
 ```
 
-The current seven-run matrix targets HomeBench and uses a minimal sequential
-baseline instead of the original. SimuHome and the Home Assistant Dataset will
-be integrated later; the project benchmark remains available separately.
 
 The DEXA dataset from the original archive is included in `benchmark/`.
 HomeBench data must be downloaded separately. Lean sources are included;
 retain your existing compiled `lean/.lake/` directory or run `cd lean && lake build`.
+
+Both benchmark runners save per-call token usage, provider timings and raw
+responses, including format failures. Internal failed plans also count as errors.
+Ollama uses JSON mode uniformly across the seven configurations.
 
 ### Installation
 
@@ -198,9 +199,3 @@ To add a new device agent:
 - [Gemma Documentation](https://ai.google.dev/gemma) - Model details
 ## Replacing the previous package
 
-Remove the old `adapters/homebench.py` and top-level `agent_registry_homebench.py`
-when adopting this folder layout. They moved to `external_benchmarks/`; no aliases
-are needed. An old `experiment_config.py` is also unused. Preserve your `.env`
-and the compiled contents of `lean/.lake/`.
-
-If you copied an earlier generated package, delete its obsolete `experiment_support.py`.

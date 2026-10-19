@@ -18,7 +18,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
-from llm_config import get_llm
+from llm_config import get_llm, model_for_role, summarize_calls
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
@@ -83,6 +83,7 @@ class Simulator:
         self.home = deepcopy(home)
         self.lock = RLock()
         self.reservations = {}
+        self.llm_calls = []
 
     def snapshot(self):
         with self.lock:
@@ -251,6 +252,38 @@ def get_available_agents(state, *, include_operations=None):
                     definition.pop("postconditions")
         available[agent] = entry
     return available
+
+def prompt_agents(state, available):
+    """Deduplicate schemas and nest values; keep every entity and native method."""
+    cards, schemas, schema_ids, covered = deepcopy(available), {}, {}, set()
+    for card in cards.values():
+        operations = card.get("operations", {})
+        for section, scope, target in (("devices", "device", "device_id"), ("services", "service", "service_id")):
+            for entity_id, entity in card[section].items():
+                methods = {}
+                for skill in entity["skills"]:
+                    definition = entity.get("parameters", {}).get(skill)
+                    if definition is None:
+                        agent = state["home_config"][section][entity_id]["agent_id"]
+                        definition = state["agent_registry"][agent]["operations"][skill]["parameters"]
+                    parameters = {k: v for k, v in definition.items() if k != target}
+                    signature = json.dumps(parameters, sort_keys=True)
+                    if signature not in schema_ids:
+                        name = f"s{len(schemas)}"
+                        schema_ids[signature] = name
+                        schemas[name] = parameters
+                    methods[skill] = schema_ids[signature]
+                prefix = f"{scope}.{entity_id}."
+                values = {key[len(prefix):]: value["value"] for key, value in state["home_state"].items() if key.startswith(prefix)}
+                covered.update(prefix + key for key in values)
+                card[section][entity_id] = {**{k: v for k, v in entity.items()
+                    if k not in {"agent_id", "skills", "parameters", "homebench_name"}}, "methods": methods, "state": values}
+        card.pop("capabilities", None)  # Exact methods remain on each entity.
+        for definition in operations.values():
+            definition.pop("parameters", None)  # Supplied by the entity's method/schema map.
+    remaining = {k: v["value"] for k, v in state["home_state"].items() if k not in covered and not k.startswith("result.")}
+    return cards, schemas, remaining
+
 
 # Tools write the live simulator directly. Their output is only a report, never the after-state.
 def device_tool(skill, args, simulator, now, simulation):
@@ -701,18 +734,46 @@ def execute_action(state):
     return Command(update={"task_results": [result]}, goto="complete_round")
 
 
-def _ask(instructions, *, role="planner", expected=None, **context):
-    llm = get_llm(role)
-    result = (llm | JsonOutputParser()).invoke([
-        SystemMessage(content=instructions + "\nReturn only the requested JSON object; no explanation."),
-        HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":"))),
-    ])
-    if not isinstance(result, dict):
-        raise ValueError("Das Modell muss ein JSON-Objekt liefern.")
-    for field, kind in (expected or {}).items():
-        if field not in result or not isinstance(result[field], kind):
-            raise ValueError(f"Modellantwort: {field!r} fehlt oder ist kein {kind.__name__}.")
-    return result
+def _ask(instructions, *, role="planner", expected=None, request_id=None, **context):
+    messages = [SystemMessage(content=instructions + "\nReturn only the requested JSON object; no explanation."),
+                HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":")))]
+    # Keep the actual request visible after the catalogue, too. This does not add new input.
+    request = context.get("original_input", context.get("user_message"))
+    if request:
+        messages[-1].content += "\nUser request: " + request
+    call = {"call_id": uuid4().hex, "role": role, "model": model_for_role(role),
+            "started_at": datetime.now(timezone.utc).isoformat(), "prompt_chars": sum(len(m.content) for m in messages),
+            "input_tokens": None, "output_tokens": None, "error": None}
+    started = time.perf_counter()
+    try:
+        llm = get_llm(role)
+        call["json_mode"] = getattr(llm, "format", None)
+        call["configured_num_ctx"] = getattr(llm, "num_ctx", None)  # None means the server decides.
+        response = llm.invoke(messages)
+        metadata, usage = response.response_metadata or {}, response.usage_metadata or {}
+        call.update(raw_response=response.content, response_metadata=deepcopy(metadata), usage_metadata=deepcopy(usage),
+                    input_tokens=usage.get("input_tokens", metadata.get("prompt_eval_count")),
+                    output_tokens=usage.get("output_tokens", metadata.get("eval_count")))
+        if call["model"].startswith("ollama:"):
+            call["server_timings_s"] = {key: metadata[key] / 1e9 for key in
+                ("total_duration", "load_duration", "prompt_eval_duration", "eval_duration") if metadata.get(key) is not None}
+        result = JsonOutputParser().invoke(response)
+        if not isinstance(result, dict):
+            raise ValueError("Das Modell muss ein JSON-Objekt liefern.")
+        for field, kind in (expected or {}).items():
+            if field not in result or not isinstance(result[field], kind):
+                raise ValueError(f"Modellantwort: {field!r} fehlt oder ist kein {kind.__name__}.")
+        return result
+    except Exception as exc:
+        call["error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        call["latency_s"] = time.perf_counter() - started
+        simulator = SIMULATORS.get(request_id)
+        if simulator is not None:
+            with simulator.lock:
+                simulator.llm_calls.append(call)
+
 
 def human(state):
     text = interrupt("wait for user input...")
@@ -724,7 +785,7 @@ def human(state):
 def intent_analysis(state):
     result = _ask('Extract intents/facts and HOW, WHEN, WHERE, quantities and negation. '
                   'Output: {"infos": ["..."], "key_modifiers": ["..."]}.',
-                  role="intent_analysis", expected={"infos": list},
+                  role="intent_analysis", expected={"infos": list}, request_id=state["request_id"],
                   user_message=state["original_user_input"])
     return Command(update={"infos": result["infos"], "key_modifiers": result.get("key_modifiers", [])}, goto="task_planner")
 
@@ -748,49 +809,40 @@ def task_planner(state):
                          'Independent goals have depends_on=[]. A task that needs earlier effects/information '
                          'depends on that predecessor. Combine related goals on the same target or order them. '
                          if graph_mode else '')
-    context = dict(original_input=state["original_user_input"],
-                   available_agents={agent: {"description": card["description"], "skills": card["capabilities"],
-                       "devices": card["devices"], "services": card["services"],
-                       "operations": {skill: {k: d[k] for k in ("parameters", "preconditions") if k in d}
-                                      for skill, d in card.get("operations", {}).items()}}
-                                     for agent, card in available.items()},
+    cards, schemas, remaining_state = prompt_agents(state, available)
+    for card in cards.values():
+        card["operations"] = {skill: {k: d[k] for k in ("preconditions",) if k in d}
+                              for skill, d in card.get("operations", {}).items()}
+    context = dict(original_input=state["original_user_input"], available_agents=cards, argument_schemas=schemas,
                    search_fixture_queries=list(state["simulation_data"].get("search_results", {})),
-                   rooms=state["home_config"]["rooms"],
-                   home_state={key: o["value"] for key, o in state["home_state"].items() if not key.startswith("result.")})
+                   rooms=state["home_config"]["rooms"], home_state=remaining_state)
     if state["settings"]["intent_analysis_enabled"]:
         context["intent_analysis"] = {"infos": state["infos"], "key_modifiers": state["key_modifiers"]}
     if repair:
         context.update(repair=repair, tasks=state["tasks"], confirmed_results=state["task_history"])
     try:
-        result = _ask('You are the central task planner. Plan the ENTIRE original_input, not only its first clause. '
-                      'Create one high-level task per distinct requested goal, assigned to its primary domain agent. '
-                      'AND or THEN may join multiple goals; preserve THEN ordering and ALL conditions, timing and locations. '
-                      f'Allowed agent_id values: {json.dumps(list(available))}. '
-                      'Use these exact IDs, never node names such as audio_system_agent or invented aliases. '
-                      'audio_system handles music/playback. '
-                      'Use actual goal text for action and explicit room/device IDs for scope. '
-                      'Give requirements=[{skill_id, arguments}] for requested outcomes, with all known targets/values; '
-                      'for ALL devices include one requirement per device. Prerequisites belong in actions. '
-                      'For fully specified goals add actions including prerequisites and local dependencies; '
-                      'they run directly through Python/Lean without a domain-agent call. Otherwise omit actions. '
-                      'For predecessor data use {"from_task":"t1","field":"results.0.content"} as an argument value. '
-                      'References to records/lists may add "format":"text". Declare that task in depends_on. '
-                      'For information displays set source_field to events, inventory or results; '
-                      'literal_content=true only for explicit literal user text/URLs. Never invent missing data. '
-                      'Keep task.goal unchanged during repair; prerequisites alone do not complete its outcomes. '
-                      'The original_input is authoritative; any intent_analysis is optional, fallible supporting context. '
-                      'Check that EVERY requested goal is represented. Do not invent capabilities or extra goals. '
-                      'For invalid user subrequests add rejected_requests=[{"request":"original subrequest", "reason":"why unavailable"}]. '
-                      'Continue planning valid subrequests. A planning or execution error is not an invalid user subrequest. '
-                      'When repair is present, replace every ID in repair.task_ids, keeping IDs and original goals. Do not renumber tasks. '
-                      'You may add information-only tasks with kind="information" and parent=<affected task ID>. '
-                      'Preserve dependencies on retained tasks; do not repeat completed unrelated goals. '
-                      + graph_instruction + ' Output: {"task_queue": [{"task_id": "t1", "agent_id": "lighting", '
-                      '"action": "Turn on the living room ceiling light", "actions": [{"task_id": "a1", "skill_id": "turn_on", '
-                      '"arguments": {"device_id": "light_lr_ceiling"}, "depends_on": []}], '
-                      '"requirements": [{"skill_id": "turn_on", "arguments": {"device_id": "light_lr_ceiling"}}]}], '
-                      '"response": "reason if no tasks"}. The actions field is optional.',
-                      role="planner", expected={"task_queue": list}, **context)
+        result = _ask('Plan the ENTIRE original_input as JSON. Do not describe the catalogue. '
+                      'Create one task per distinct user goal; preserve order, locations, quantities and conditions. '
+                      'Use only agent IDs and device/service IDs from available_agents. '
+                      'Each entity lists its exact methods: method -> argument_schemas ID. '
+                      'Use that schema for arguments, adding device_id or service_id with the entity ID. '
+                      'Never use schema IDs as argument values. Current values are in each entity.state. '
+                      'Give task.action as the actual user goal, scope as room/device IDs, constraints as strings. '
+                      'Give requirements=[{skill_id,arguments}] for requested outcomes with known targets/values; '
+                      'include every requested device. Add actions only when concrete; otherwise let the domain agent refine. '
+                      'Prerequisites belong in actions; they do not replace required outcomes. '
+                      'For missing predecessor data use {"from_task":"<task ID>","field":"<output field>"}; declare its dependency. '
+                      'For displays set source_field to events, inventory or results; literal_content=true only for explicit user text/URLs. '
+                      'For each invalid user subrequest add {"request":"<original clause>","reason":"<unavailable device/method/value>"} '
+                      'to rejected_requests and keep the valid tasks. Do not invent devices or substitute another device type. '
+                      'Planning/execution failures are not invalid user requests. '
+                      'Intent analysis is optional supporting context; original_input is authoritative. '
+                      'For repair replace all repair.task_ids, preserving their IDs, goals and retained dependencies; '
+                      'only add information tasks with kind="information" and parent=<affected ID>. '
+                      + graph_instruction + ' Output: {"task_queue":[],"rejected_requests":[],"response":""}. '
+                      'A task has task_id, agent_id, action, requirements and optional actions. '
+                      'An action has task_id, skill_id, arguments and depends_on. Use actual catalogue IDs, never placeholders.',
+                      role="planner", expected={"task_queue": list}, request_id=state["request_id"], **context)
         rejected = result.get("rejected_requests", [])
         if not isinstance(rejected, list) or any(not isinstance(r, dict) or not r.get("request") or not r.get("reason") for r in rejected):
             raise ValueError("rejected_requests needs request/reason objects.")
@@ -891,8 +943,8 @@ def _agent(state, agent):
                     'Use {"from_task":"t1","field":"results.0.content"} for confirmed predecessor data; '
                     'use "format":"text" for records/lists. Retrieve missing data through collaboration. '
                     'Return ordered calls with concrete IDs using operation parameters/conditions. '
-                    'For music playback on a powered-off device, plan turn_on followed by play with the requested '
-                    'track; when already powered on, plan play directly. Do not invent catalog entries or genre matches. '
+                    'Add prerequisites only when required by the listed operation preconditions; never assume turn_on is required. '
+                    'Do not invent catalog entries or genre matches. '
                     'Use current state, cards and previous confirmed results. Include prerequisite actions yourself. '
                     'Never fabricate inventory, time, appointments or search facts. For ALL devices emit separate calls. '
                     'Timers/alarms only store entries; delayed device actions are not supported. '
@@ -901,13 +953,15 @@ def _agent(state, agent):
                     'After receiving help, complete without another collaboration request. ' + graph_instruction + 'Output: '
                     '{"actions": [{"skill_id": "<operation>", "arguments": {"<parameter>": "<value>"}}], '
                     '"collaboration_request": {"target": "fridge", "request": "specific question"} or {}}.')
+    cards, schemas, remaining_state = prompt_agents(state, {agent: available[agent]})
+    instructions += (' Entity methods map to argument_schemas IDs; use those argument names/limits '
+                     'and add device_id/service_id with the entity ID. State values are nested in each entity.state.')
     try:
-        result = _ask(instructions, role=agent, expected={"actions": list},
+        result = _ask(instructions, role=agent, expected={"actions": list}, request_id=state["request_id"],
                       original_input=state["original_user_input"],
                       search_fixture_queries=list(state["simulation_data"].get("search_results", {})) if agent == "search_engine" else [],
-                      agent=agent, task=task, agent_card=available[agent], available_agents=list(available),
-                      home_state={key: observation["value"] for key, observation in state["home_state"].items()
-                                  if not key.startswith("result.")},
+                      agent=agent, task=task, agent_card=cards[agent], argument_schemas=schemas, available_agents=list(available),
+                      home_state=remaining_state,
                       task_history=[{**h, "results": [r for r in h["results"]
                           if r["status"] == "success" and state["action_graph"].get(r["task_id"], {}).get("status") == "success"]}
                           for h in state["task_history"]] if graph_mode else state["task_history"],
@@ -1352,7 +1406,7 @@ def scheduler(state):
         ids = _ask('You schedule the next execution batch. Select 1..max_actions unique action IDs from actions. '
                    'Choose useful parallel work: no shared target and no write/write or read/write conflicts. '
                    'Keep agents and arguments unchanged. Output only {"action_ids": ["t1/a1"]}.',
-                   expected={"action_ids": list}, role="scheduler", original_input=state["original_user_input"],
+                   expected={"action_ids": list}, role="scheduler", request_id=state["request_id"], original_input=state["original_user_input"],
                    max_actions=limit, actions=[{"action_id": a["task_id"], "agent_id": a["agent_id"],
                        "goal": a["task"]["action"], "skill_id": a["skill_id"], "arguments": a["arguments"],
                        "reads": a["footprint"][0], "writes": a["footprint"][1], "target": a["footprint"][2]}
@@ -1543,23 +1597,42 @@ def run_request(text, **setup):
     state = create_initial_state(**setup)
     config = {"configurable": {"thread_id": uuid4().hex}, "recursion_limit": state["settings"]["recursion_limit"]}
     selected_graph = build_graph(state["agent_registry"]) if "agent_registry" in setup else graph
-    proposals = {}
+    proposals, failure = {}, None
     try:
         yield {"experiment_config": {"settings": state["settings"]}}
-        for _ in selected_graph.stream(state, config):
-            pass
-        for event in selected_graph.stream(Command(resume=text), config):
-            for update in event.values():
-                if isinstance(update, dict):
-                    actions = list(update.get("action_graph", {}).values()) + update.get("pending_actions", [])
-                    for action in actions:
-                        if action["task_id"] not in proposals:
-                            proposals[action["task_id"]] = deepcopy(action)
-            yield event
-        final = selected_graph.get_state(config).values
-        yield {"episode_result": {"proposed_actions": list(proposals.values()),
-                  "task_results": final["task_results"], "rejected_requests": final["rejected_requests"],
-                  "tasks": final["tasks"], "final_response": final["final_response"]}}
+        try:
+            for _ in selected_graph.stream(state, config):
+                pass
+            for event in selected_graph.stream(Command(resume=text), config):
+                for update in event.values():
+                    if isinstance(update, dict):
+                        actions = list(update.get("action_graph", {}).values()) + update.get("pending_actions", [])
+                        for action in actions:
+                            if action["task_id"] not in proposals:
+                                proposals[action["task_id"]] = deepcopy(action)
+                yield event
+        except Exception as exc:
+            failure = exc
+        final = selected_graph.get_state(config).values or state
+        calls = deepcopy(SIMULATORS[state["request_id"]].llm_calls)
+        task_failures = [{"task_id": t["task_id"], "kind": "blocked" if t.get("status") == "blocked" else (t.get("failure") or {}).get("kind", "plan"),
+                          "error": t.get("error") or t["status"]} for t in final["tasks"].values()
+                         if t.get("status") in {"failed", "blocked"}]
+        try:
+            response = json.loads(final["final_response"])
+        except (TypeError, ValueError):
+            response = None
+        if isinstance(response, dict) and response.get("status") == "failed":
+            task_failures.append({"kind": (response.get("failure") or {}).get("kind", "plan"),
+                                  "error": response.get("error") or "Planning failed"})
+        error = (f"{type(failure).__name__}: {failure}" if failure else
+                 "; ".join(t["error"] for t in task_failures) or None)
+        yield {"episode_result": {"proposed_actions": list(proposals.values()), "task_results": final["task_results"],
+                  "rejected_requests": final["rejected_requests"], "tasks": final["tasks"],
+                  "final_response": final["final_response"], "error": error, "task_failures": task_failures,
+                  "llm_calls": calls, "model_usage": summarize_calls(calls)}}
+        if failure is not None:
+            raise failure
     finally:
         SIMULATORS.pop(state["request_id"], None)
         selected_graph.checkpointer.delete_thread(config["configurable"]["thread_id"])
@@ -1574,7 +1647,7 @@ def interactive(**setup):
             started = time.perf_counter()
             for event in run_request(text, **setup):
                 for node, update in event.items():
-                    if update and update.get("final_response"):
+                    if node != "episode_result" and update and update.get("final_response"):
                         print(update["final_response"])
             print(f"Time: {time.perf_counter() - started:.2f}s")
 
