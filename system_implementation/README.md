@@ -128,6 +128,28 @@ Any `provider:model` supported by LangChain's `init_chat_model` works
 for OpenAI-compatible services, ...).
 
 
+### Real devices through Home Assistant (optional)
+
+`turn_on` and `turn_off` can switch real devices through a [Home Assistant](https://www.home-assistant.io)
+instance; all other operations, and all devices you do not list, stay simulated. Create a
+long-lived access token on your Home Assistant profile page and add to `.env`:
+```bash
+   HA_URL=http://homeassistant.local:8123
+   HA_TOKEN=...
+   HA_ENTITIES=tv_lr=media_player.living_room_tv,light_lr_ceiling=light.living_room
+```
+`HA_ENTITIES` maps device IDs of `home_defaults.py` to Home Assistant entities (`media_player`,
+`light` or `switch`). Then run
+```bash
+   python smart_home_langgraph.py --home-assistant
+```
+For every request, the power state of the listed devices is read from Home Assistant. After
+switching, the state Home Assistant reports is recorded, so a device that does not switch within
+`HA_TIMEOUT` seconds (default 15) fails the usual outcome check. In Python, use
+`run_request(text, **home_assistant_setup(HomeAssistant.from_env()))`. Many TVs cannot be switched
+on over the network once fully off; Home Assistant then needs Wake-on-LAN or HDMI-CEC for that TV.
+`python -m unittest test_home_assistant` tests the connection against a fake Home Assistant.
+
 ### Evaluation
 
 For detailed benchmark evaluation instructions, see [`../benchmark/README.md`](../benchmark/README.md).

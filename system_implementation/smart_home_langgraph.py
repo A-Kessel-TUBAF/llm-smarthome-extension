@@ -25,6 +25,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command, Send, interrupt
 from agent_registry import AGENT_REGISTRY
+from home_assistant import HomeAssistant
 from home_defaults import HOME_DEFAULTS, SEARCH_FIXTURES
 
 SUPPORTED_BENCHMARKS = {"dexa", "homebench", "simuhome", "homeassistant"}
@@ -519,6 +520,16 @@ TOOLS = {
                     else search_tool if agent == "search_engine" else device_tool)
     for agent, card in AGENT_REGISTRY.items() for skill in card["capabilities"]
 }
+def home_assistant_setup(home_assistant):
+    """Start state and tools for the devices switched through Home Assistant (home_assistant.py).
+    Use as run_request(text, **home_assistant_setup(HomeAssistant.from_env()))."""
+    observations = {f"device.{device}.power": make_observation(power, source="home_assistant")
+                    for device, power in home_assistant.power_states().items()}
+    tool = home_assistant.power_tool(device_tool)
+    bindings = {(agent, skill): tool for agent, card in AGENT_REGISTRY.items()
+                for skill in ("turn_on", "turn_off") if TOOLS.get((agent, skill)) is device_tool}
+    return dict(observations=observations, tool_bindings=bindings)
+
 UNITS = {"brightness_pct": "%", "color_temperature_k": "K", "volume_pct": "%",
          "target_temperature_c": "degC", "stopwatch_elapsed_seconds": "s"}
 
@@ -1923,14 +1934,16 @@ def run_request(text, **setup):
         selected_graph.checkpointer.delete_thread(config["configurable"]["thread_id"])
 
 
-def interactive(**setup):
+def interactive(home_assistant=None, **setup):
     while True:
         text = input("\nYour command (quit to exit): ").strip()
         if text.lower() in {"q", "quit", "exit"}:
             break
         if text:
             started = time.perf_counter()
-            for event in run_request(text, **setup):
+            # Read the real devices' power state again for every request.
+            extra = home_assistant_setup(home_assistant) if home_assistant else {}
+            for event in run_request(text, **setup, **extra):
                 for node, update in event.items():
                     if node != "episode_result" and update and update.get("final_response"):
                         print(update["final_response"])
@@ -1939,5 +1952,8 @@ def interactive(**setup):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smart home interactive session")
     add_settings_arguments(parser)
+    parser.add_argument("--home-assistant", action="store_true",
+                        help="switch the devices listed in HA_ENTITIES (.env) on and off through Home Assistant")
     args = parser.parse_args()
-    interactive(config_path=args.config, **settings_from_args(args))
+    interactive(config_path=args.config, home_assistant=HomeAssistant.from_env() if args.home_assistant else None,
+                **settings_from_args(args))
