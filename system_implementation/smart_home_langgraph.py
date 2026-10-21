@@ -1099,6 +1099,7 @@ def _agent(state, agent):
                          'For repair, propose only missing/corrective actions; do not repeat retained successful actions. '
                          'If repair requires changing cross-agent routing/dependencies, return actions=[] with '
                          'replan_required=true and reason. Stay within the assigned goal and its constraints. '
+                         'If task.help_declined is set, complete your goal without that help, or return replan_required. '
                          if graph_mode else '')
     task.setdefault("goal", freeze_goal(task, state))
     instructions = ('Preserve task.goal and its required targets/values; complete all outcomes after prerequisites. '
@@ -1287,7 +1288,12 @@ def plan_agents(state):
                                goto="task_planner")
             task["terminal"] = True
             if task.get("parent"):
-                tasks[task["parent"]].update(status="failed", error="Informationsbeschaffung fehlgeschlagen.")
+                # A declined help request does not fail the requester: it continues with its own goal.
+                own = [f'{t["task_id"]}: {t["action"]}' for t in tasks.values()
+                       if t["agent_id"] == task["agent_id"] and not t.get("parent")]
+                tasks[task["parent"]].update(status="pending", help_done=True, help_declined=(
+                    f'{task["agent_id"]} did not help ({task.get("error") or "no result"}). Helpers only provide '
+                    'information.' + (f' Its own tasks in this plan: {"; ".join(own)}.' if own else '')))
             continue
         task.update(status="pending", repairs=task.get("repairs", 0) + 1,
                     generation=task.get("generation", 0) + 1)
