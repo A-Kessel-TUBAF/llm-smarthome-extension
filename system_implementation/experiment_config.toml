@@ -1,3 +1,31 @@
+# Central experiment settings (Python 3.11+ TOML).
+#
+# NOTE: reconstructed by a contributor. Since commit 46d27d0 the code reads the sections below,
+# but the committed file was still the old flat MAS file, so importing the system failed with
+# KeyError: 'model'. The [mas] values are those of that file (plus domain_agents_enabled); all
+# other values are defaults inferred from the code and README. If the maintainer has an own
+# version of this file, it can simply replace this one.
+#
+# Environment variables take precedence where the code supports them, e.g. LLM_MODEL,
+# OPENAI_BASE_URL, HOMEBENCH_PATH, SIMUHOME_PATH, HOMEASSISTANT_DATASET_PATH,
+# SIMULATOR_API_BASE_URL. Paths are relative to system_implementation/.
+
+[model]
+model = "ollama:gemma2"
+api_base = ""
+temperature = 0.0
+seed = 42
+max_tokens = 4096
+context_window = 8192
+request_timeout = 120     # seconds; a stalled API call fails instead of hanging the run
+json_mode = true
+
+[mas_models]
+same_for_all = true
+roles = {}
+
+[mas]
+domain_agents_enabled = true
 # Preparation and recovery (repair_enabled=false overrides the four recovery switches).
 auto_prepare = true
 repair_enabled = true
@@ -25,3 +53,86 @@ check_outcomes = true
 include_operations = true
 include_conditions = true
 search_mode = "fixtures"
+
+[react]
+max_steps = 10
+episode_timeout = 600
+
+[sage]
+sage_path = "../SAGE"
+sage_python = ""
+max_llm_calls = 50
+episode_timeout = 600
+
+[dsia]
+episode_timeout = 600
+
+[experiments]
+system = "mas"
+benchmark = "homebench"
+category = "all"
+limit = 0
+repetitions = 1
+output_dir = "logs/experiments"
+
+[benchmarks.homebench]
+path = "../HomeBench/dataset"
+python = ""
+
+[benchmarks.simuhome]
+path = "../SimuHome"
+python = ""
+api_base = "http://127.0.0.1:8000/api"
+request_timeout = 60
+
+[benchmarks.homeassistant]
+path = "../home-assistant-datasets"
+python = ""
+tool_timeout = 30
+
+[judge]
+model = "ollama:gemma2"
+api_base = ""
+temperature = 0.0
+request_timeout = 120
+seeds = [1]
+
+# MAS ablation matrix; each entry overrides only its differences.
+[[runs]]
+name = "minimal_sequential"
+system = "mas"
+settings = { dependency_graph = false, parallel_agents = false, parallel_actions = false, auto_prepare = false, repair_enabled = false, intent_analysis_enabled = false, validate_contracts = false, check_outcomes = false, include_operations = false, include_conditions = false, checker = "python", scheduler_mode = "python", max_workers = 1 }
+
+[[runs]]
+name = "extended"
+system = "mas"
+
+[[runs]]
+name = "sequential"
+system = "mas"
+settings = { parallel_agents = false, parallel_actions = false }
+
+[[runs]]
+name = "llm_scheduler"
+system = "mas"
+settings = { scheduler_mode = "llm" }
+
+[[runs]]
+name = "without_preparation_repair"
+system = "mas"
+settings = { auto_prepare = false, repair_enabled = false }
+
+[[runs]]
+name = "intent_analyser"
+system = "mas"
+settings = { intent_analysis_enabled = true }
+
+[[runs]]
+name = "lean"
+system = "mas"
+settings = { checker = "lean" }
+
+[[runs]]
+name = "planner_only"
+system = "mas"
+settings = { domain_agents_enabled = false, intent_analysis_enabled = false, scheduler_mode = "python" }
