@@ -1,0 +1,2003 @@
+{
+  "benchmark_info": {
+    "name": "Smart Home LLM-based Multi-Agent Benchmark: extension (DRAFT)",
+    "total_cases": 40,
+    "description": "40 additional test cases, 8 per dimension: dependency structure, ambiguity, scale, concurrency, failure recovery. Same format as benchmark_data.json, plus 'dimension', 'annotation' (for C(task)), and for some dimensions 'expected_concurrency' or 'injected_failure' / 'expected_recovery'. See EXTENSION.md."
+  },
+  "test_cases": [
+    {
+      "id": "ext_dep_01",
+      "category": "complex",
+      "dimension": "dependency_structure",
+      "user_input": "Check what's in the fridge, find a dinner recipe I can make with it, show the recipe on the TV, and set a timer for the cooking time in the recipe",
+      "required_intents": [
+        {
+          "intent": "Check fridge contents",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Find dinner recipe from available ingredients",
+          "device_type": "search"
+        },
+        {
+          "intent": "Show recipe on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Set timer for the recipe's cooking time",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Search obtains ingredients from fridge",
+          "Display obtains recipe from search",
+          "Clock obtains cooking time from search"
+        ]
+      },
+      "expected_final_output": "A recipe based on the fridge contents is shown on the TV and a timer is set to its cooking time",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ]
+        ],
+        "temporal": [
+          "cooking time in the recipe"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_02",
+      "category": "simple",
+      "dimension": "dependency_structure",
+      "user_input": "When is my dentist appointment tomorrow? Set an alarm one hour before it",
+      "required_intents": [
+        {
+          "intent": "Look up tomorrow's dentist appointment",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Set alarm one hour before the appointment",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Clock obtains appointment time from calendar"
+        ]
+      },
+      "expected_final_output": "The appointment time is reported and an alarm is set one hour before it",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [
+          "tomorrow",
+          "one hour before it"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_03",
+      "category": "moderate",
+      "dimension": "dependency_structure",
+      "user_input": "Find out when the sun sets today and dim the living room lights at that time",
+      "required_intents": [
+        {
+          "intent": "Find today's sunset time",
+          "device_type": "search"
+        },
+        {
+          "intent": "Schedule an action at sunset",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Dim living room lights at sunset",
+          "device_type": "light"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Clock obtains sunset time from search",
+          "Light is triggered by clock at sunset"
+        ]
+      },
+      "expected_final_output": "The living room lights are scheduled to dim at today's sunset time",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "temporal": [
+          "today",
+          "at that time"
+        ],
+        "spatial": [
+          "living room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_04",
+      "category": "moderate",
+      "dimension": "dependency_structure",
+      "user_input": "Check tomorrow's weather. If it will be cold, set the bedroom to 22 degrees for tonight, otherwise to 19 degrees, and add the forecast to my calendar",
+      "required_intents": [
+        {
+          "intent": "Check tomorrow's weather",
+          "device_type": "search"
+        },
+        {
+          "intent": "Set bedroom temperature depending on forecast",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Add forecast to calendar",
+          "device_type": "calendar"
+        }
+      ],
+      "note": "The thermostat setting is conditional on the forecast",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Thermostat obtains forecast from search",
+          "Calendar obtains forecast from search"
+        ]
+      },
+      "expected_final_output": "The bedroom temperature matches the forecast (22 or 19 degrees) and the forecast is in the calendar",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            2
+          ]
+        ],
+        "temporal": [
+          "tomorrow",
+          "tonight"
+        ],
+        "spatial": [
+          "bedroom"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_05",
+      "category": "moderate",
+      "dimension": "dependency_structure",
+      "user_input": "See what in the fridge is about to expire, find a recipe that uses it, and add 'cook dinner' with the recipe name to my calendar at 7 pm",
+      "required_intents": [
+        {
+          "intent": "Find food about to expire",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Find recipe using the expiring food",
+          "device_type": "search"
+        },
+        {
+          "intent": "Add 'cook dinner' event with recipe name at 7 pm",
+          "device_type": "calendar"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Search obtains expiring food from fridge",
+          "Calendar obtains recipe name from search"
+        ]
+      },
+      "expected_final_output": "A recipe using the expiring food is found and a 'cook dinner' event with its name is added at 7 pm",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "temporal": [
+          "at 7 pm"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_06",
+      "category": "complex",
+      "dimension": "dependency_structure",
+      "user_input": "Check my calendar for this evening and the weather forecast. If I'm at home and it's raining, put a movie on the TV and warm up the living room",
+      "required_intents": [
+        {
+          "intent": "Check this evening's schedule",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Check weather forecast",
+          "device_type": "search"
+        },
+        {
+          "intent": "Play a movie on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Warm up the living room",
+          "device_type": "thermostat"
+        }
+      ],
+      "note": "Both actions are conditional on both lookups",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display and thermostat actions depend on the calendar and the weather result"
+        ]
+      },
+      "expected_final_output": "If the user is at home and it rains, a movie plays and the living room is warmer; otherwise nothing is changed",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            0,
+            3
+          ],
+          [
+            1,
+            3
+          ]
+        ],
+        "temporal": [
+          "this evening"
+        ],
+        "spatial": [
+          "living room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_07",
+      "category": "complex",
+      "dimension": "dependency_structure",
+      "user_input": "Find a 30-minute workout video and play it on the TV. When it ends, set the lights back to normal and play relaxing music",
+      "required_intents": [
+        {
+          "intent": "Find 30-minute workout video",
+          "device_type": "search"
+        },
+        {
+          "intent": "Play workout video on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Reset lights after the workout",
+          "device_type": "light"
+        },
+        {
+          "intent": "Play relaxing music after the workout",
+          "device_type": "audio"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains video from search",
+          "Audio obtains relaxing music from search",
+          "Light and audio start after the video ends"
+        ]
+      },
+      "expected_final_output": "The workout video plays; afterwards the lights are reset and relaxing music plays",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            0,
+            3
+          ]
+        ],
+        "temporal": [
+          "30-minute",
+          "when it ends"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_dep_08",
+      "category": "complex",
+      "dimension": "dependency_structure",
+      "user_input": "Check if I have eggs and flour. If I do, find a pancake recipe and show it on the kitchen screen. If not, add 'buy eggs and flour' to tomorrow's schedule",
+      "required_intents": [
+        {
+          "intent": "Check for eggs and flour",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Find pancake recipe if available",
+          "device_type": "search"
+        },
+        {
+          "intent": "Show recipe on kitchen screen if available",
+          "device_type": "display"
+        },
+        {
+          "intent": "Add shopping reminder for tomorrow if missing",
+          "device_type": "calendar"
+        }
+      ],
+      "note": "Exactly one branch should run, depending on the fridge result",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Search runs only if the fridge has eggs and flour",
+          "Display obtains recipe from search",
+          "Calendar runs only if something is missing"
+        ]
+      },
+      "expected_final_output": "Either a pancake recipe is shown on the kitchen screen or a shopping reminder is added, depending on the fridge",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            0,
+            3
+          ]
+        ],
+        "temporal": [
+          "tomorrow"
+        ],
+        "spatial": [
+          "kitchen"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_01",
+      "category": "simple",
+      "dimension": "ambiguity",
+      "user_input": "It's too bright in here",
+      "acceptable_intents": [
+        {
+          "intent": "Dim the lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Lower screen brightness",
+          "device_type": "display"
+        }
+      ],
+      "note": "'In here' does not name a room",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Brightness is reduced where the user is",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "in here"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_02",
+      "category": "complex",
+      "dimension": "ambiguity",
+      "user_input": "I can't sleep",
+      "acceptable_intents": [
+        {
+          "intent": "Play sleep sounds",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Dim or turn off lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Lower temperature for sleep",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Find tips for falling asleep",
+          "device_type": "search"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The environment is adjusted for sleep",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_03",
+      "category": "complex",
+      "dimension": "ambiguity",
+      "user_input": "Get the house ready for the morning",
+      "acceptable_intents": [
+        {
+          "intent": "Set wake-up alarm",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Warm up the house in the morning",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Schedule wake-up lighting",
+          "device_type": "light"
+        },
+        {
+          "intent": "Prepare tomorrow's schedule overview",
+          "device_type": "calendar"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Morning preparations are scheduled",
+      "annotation": {
+        "deps": [],
+        "temporal": [
+          "for the morning"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_04",
+      "category": "moderate",
+      "dimension": "ambiguity",
+      "user_input": "Something for the kids, please",
+      "acceptable_intents": [
+        {
+          "intent": "Play a kids' show",
+          "device_type": "display"
+        },
+        {
+          "intent": "Play kids' music",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Find kids' activities",
+          "device_type": "search"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Kid-appropriate entertainment or activities are offered",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_05",
+      "category": "complex",
+      "dimension": "ambiguity",
+      "user_input": "Turn it down",
+      "acceptable_intents": [
+        {
+          "intent": "Lower music volume",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Lower TV volume",
+          "device_type": "display"
+        },
+        {
+          "intent": "Lower temperature",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Dim lights",
+          "device_type": "light"
+        }
+      ],
+      "note": "Without context the system should choose the device that is currently active, or ask",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The currently active device is turned down, or the system asks which one",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_06",
+      "category": "moderate",
+      "dimension": "ambiguity",
+      "user_input": "Remind me about the thing tomorrow",
+      "required_intents": [
+        {
+          "intent": "Look up tomorrow's events",
+          "device_type": "calendar"
+        }
+      ],
+      "acceptable_intents": [
+        {
+          "intent": "Add a reminder for the event",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Set a reminder alarm",
+          "device_type": "clock"
+        }
+      ],
+      "note": "'The thing' must be resolved from the calendar or by asking",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "The reminder obtains the event from the calendar lookup"
+        ]
+      },
+      "expected_final_output": "The event is identified from the calendar (or the user is asked) and a reminder is set",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            2
+          ]
+        ],
+        "temporal": [
+          "tomorrow"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_07",
+      "category": "complex",
+      "dimension": "ambiguity",
+      "user_input": "I'm working from home today",
+      "acceptable_intents": [
+        {
+          "intent": "Set work lighting",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set comfortable temperature",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Show today's meetings",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Play focus music",
+          "device_type": "audio"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "A working environment is prepared",
+      "annotation": {
+        "deps": [],
+        "temporal": [
+          "today"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_amb_08",
+      "category": "complex",
+      "dimension": "ambiguity",
+      "user_input": "Set the mood for a date night",
+      "acceptable_intents": [
+        {
+          "intent": "Set romantic lighting",
+          "device_type": "light"
+        },
+        {
+          "intent": "Play romantic music",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Set a comfortable temperature",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Find a dinner recipe or restaurant",
+          "device_type": "search"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "A romantic atmosphere is set",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_01",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Good morning routine: turn on the bedroom and kitchen lights, set the kitchen to 21 degrees, show today's schedule and the weather on the TV, play the news podcast, and start a 5-minute timer for the eggs",
+      "required_intents": [
+        {
+          "intent": "Turn on bedroom lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Turn on kitchen lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set kitchen to 21 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Get today's schedule",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Get today's weather",
+          "device_type": "search"
+        },
+        {
+          "intent": "Show schedule and weather on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Play news podcast",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Start 5-minute egg timer",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains schedule from calendar and weather from search",
+          "Audio obtains the podcast from search"
+        ]
+      },
+      "expected_final_output": "All eight morning actions are done",
+      "annotation": {
+        "deps": [
+          [
+            3,
+            5
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            4,
+            6
+          ]
+        ],
+        "temporal": [
+          "today",
+          "5-minute"
+        ],
+        "spatial": [
+          "bedroom",
+          "kitchen",
+          "kitchen"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_02",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "We're leaving for the weekend: turn off all the lights, set every room to 16 degrees, add 'back home' on Sunday at 6 pm to my calendar, check what in the fridge will expire before Sunday, and set an alarm for Friday at 7 am",
+      "required_intents": [
+        {
+          "intent": "Turn off all lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set every room to 16 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Add 'back home' on Sunday 6 pm",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Find food expiring before Sunday",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Set alarm for Friday 7 am",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The home is set to away mode, the calendar entry and alarm exist, and expiring food is listed",
+      "annotation": {
+        "deps": [],
+        "temporal": [
+          "for the weekend",
+          "Sunday at 6 pm",
+          "before Sunday",
+          "Friday at 7 am"
+        ],
+        "spatial": [
+          "all the lights",
+          "every room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_03",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Party in an hour: set the living room lights to party colors, make the kitchen lights bright, play an upbeat playlist, show a fireplace video on the TV, set the living room to 20 degrees, find a quick cocktail recipe, and remind me in 45 minutes to take the pizza out",
+      "required_intents": [
+        {
+          "intent": "Set living room lights to party colors",
+          "device_type": "light"
+        },
+        {
+          "intent": "Make kitchen lights bright",
+          "device_type": "light"
+        },
+        {
+          "intent": "Play upbeat playlist",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Show fireplace video on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Set living room to 20 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Find quick cocktail recipe",
+          "device_type": "search"
+        },
+        {
+          "intent": "Remind in 45 minutes to take the pizza out",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Audio obtains playlist from search",
+          "Display obtains fireplace video from search"
+        ]
+      },
+      "expected_final_output": "All seven party preparations are done",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            2
+          ],
+          [
+            "search",
+            3
+          ]
+        ],
+        "temporal": [
+          "in an hour",
+          "in 45 minutes"
+        ],
+        "spatial": [
+          "living room",
+          "kitchen",
+          "living room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_04",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Prepare the bedroom, the guest room and the kids' room for guests: lights at 50 percent and temperature at 21 degrees in each, and add their arrival on Friday at 6 pm to my calendar",
+      "required_intents": [
+        {
+          "intent": "Bedroom lights to 50 percent",
+          "device_type": "light"
+        },
+        {
+          "intent": "Guest room lights to 50 percent",
+          "device_type": "light"
+        },
+        {
+          "intent": "Kids' room lights to 50 percent",
+          "device_type": "light"
+        },
+        {
+          "intent": "Bedroom to 21 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Guest room to 21 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Kids' room to 21 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Add guests' arrival on Friday 6 pm",
+          "device_type": "calendar"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Three rooms are prepared and the arrival is in the calendar",
+      "annotation": {
+        "deps": [],
+        "temporal": [
+          "Friday at 6 pm"
+        ],
+        "spatial": [
+          "bedroom",
+          "guest room",
+          "kids' room",
+          "bedroom",
+          "guest room",
+          "kids' room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_05",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Plan my dinners for the week: check the fridge, find five dinner recipes using what I have, list the missing ingredients, add a shopping trip on Saturday at 10 am to my calendar, and show the meal plan on the TV",
+      "required_intents": [
+        {
+          "intent": "Check fridge contents",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Find five dinner recipes using available food",
+          "device_type": "search"
+        },
+        {
+          "intent": "List missing ingredients",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Add shopping trip on Saturday 10 am",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Show meal plan on TV",
+          "device_type": "display"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Search obtains ingredients from fridge",
+          "Fridge obtains recipe ingredients from search",
+          "Calendar obtains shopping list",
+          "Display obtains meal plan from search"
+        ]
+      },
+      "expected_final_output": "A week of dinners is planned, missing ingredients are listed, the shopping trip is scheduled and the plan is shown",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            1,
+            4
+          ]
+        ],
+        "temporal": [
+          "for the week",
+          "Saturday at 10 am"
+        ],
+        "spatial": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_06",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Movie night for four: dim the living room lights, set the living room to 22 degrees, find a family comedy and put it on the TV, find a popcorn recipe, check if we have corn kernels, and set a 2-hour timer to remind the kids to go to bed",
+      "required_intents": [
+        {
+          "intent": "Dim living room lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set living room to 22 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Find a family comedy",
+          "device_type": "search"
+        },
+        {
+          "intent": "Play the comedy on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Find popcorn recipe",
+          "device_type": "search"
+        },
+        {
+          "intent": "Check for corn kernels",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Set 2-hour bedtime timer",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains the comedy from search",
+          "Fridge obtains popcorn ingredients from search"
+        ]
+      },
+      "expected_final_output": "Movie night is set up, ingredients are checked and the bedtime timer runs",
+      "annotation": {
+        "deps": [
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ]
+        ],
+        "temporal": [
+          "2-hour"
+        ],
+        "spatial": [
+          "living room",
+          "living room"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_07",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Study session this afternoon: brighten the study, set the study to 20 degrees, play focus music, set a 50-minute timer, block the afternoon in my calendar, and show my to-do list for today on the screen",
+      "required_intents": [
+        {
+          "intent": "Brighten the study",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set study to 20 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Play focus music",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Set 50-minute timer",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Block the afternoon in calendar",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Show today's to-do list on screen",
+          "device_type": "display"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Audio obtains focus music from search",
+          "Display obtains the to-do list from calendar"
+        ]
+      },
+      "expected_final_output": "The study is prepared and the afternoon is blocked",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            2
+          ],
+          [
+            4,
+            5
+          ]
+        ],
+        "temporal": [
+          "this afternoon",
+          "50-minute",
+          "the afternoon",
+          "today"
+        ],
+        "spatial": [
+          "study",
+          "study"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_scale_08",
+      "category": "complex",
+      "dimension": "scale",
+      "user_input": "Holiday dinner: set the living room, dining room and kitchen lights to warm white, play holiday music in the living room, show the roast turkey recipe on the kitchen screen, set a 3-hour timer for the oven, and add 'dinner with family' at 6 pm to my calendar",
+      "required_intents": [
+        {
+          "intent": "Living room lights to warm white",
+          "device_type": "light"
+        },
+        {
+          "intent": "Dining room lights to warm white",
+          "device_type": "light"
+        },
+        {
+          "intent": "Kitchen lights to warm white",
+          "device_type": "light"
+        },
+        {
+          "intent": "Play holiday music in the living room",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Find roast turkey recipe",
+          "device_type": "search"
+        },
+        {
+          "intent": "Show recipe on kitchen screen",
+          "device_type": "display"
+        },
+        {
+          "intent": "Set 3-hour oven timer",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Add 'dinner with family' at 6 pm",
+          "device_type": "calendar"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Audio obtains holiday music from search",
+          "Display obtains recipe from search"
+        ]
+      },
+      "expected_final_output": "All eight holiday preparations are done",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            3
+          ],
+          [
+            4,
+            5
+          ]
+        ],
+        "temporal": [
+          "3-hour",
+          "at 6 pm"
+        ],
+        "spatial": [
+          "living room",
+          "dining room",
+          "kitchen",
+          "living room",
+          "kitchen"
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "ext_conc_01",
+      "category": "simple",
+      "dimension": "concurrency",
+      "user_input": "Turn the bedroom lights off and set them to reading mode",
+      "required_intents": [
+        {
+          "intent": "Turn off bedroom lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set bedroom lights to reading mode",
+          "device_type": "light"
+        }
+      ],
+      "note": "Contradictory settings for the same lights",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The system notices the contradiction and asks, or applies one setting after the other; never both at once",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "bedroom"
+        ],
+        "conflicts": [
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      "expected_concurrency": {
+        "parallel": [],
+        "serialize_or_clarify": [
+          [
+            0,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ext_conc_02",
+      "category": "simple",
+      "dimension": "concurrency",
+      "user_input": "Set the living room to 18 degrees for the plants and to 23 degrees because I'm cold",
+      "required_intents": [
+        {
+          "intent": "Set living room to 18 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Set living room to 23 degrees",
+          "device_type": "thermostat"
+        }
+      ],
+      "note": "Contradictory settings for the same thermostat",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The system notices the contradiction and asks which temperature to use",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "living room"
+        ],
+        "conflicts": [
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      "expected_concurrency": {
+        "parallel": [],
+        "serialize_or_clarify": [
+          [
+            0,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ext_conc_03",
+      "category": "moderate",
+      "dimension": "concurrency",
+      "user_input": "Show the football match on the TV and put my calendar on the TV too",
+      "required_intents": [
+        {
+          "intent": "Show the football match on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Get the schedule",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Show the schedule on TV",
+          "device_type": "display"
+        }
+      ],
+      "note": "Two contents for the same TV",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains the schedule from calendar"
+        ]
+      },
+      "expected_final_output": "Both contents are shown one after the other (or side by side if supported), not overwriting each other",
+      "annotation": {
+        "deps": [
+          [
+            1,
+            2
+          ]
+        ],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": [
+          [
+            0,
+            2
+          ]
+        ]
+      },
+      "expected_concurrency": {
+        "parallel": [
+          [
+            0,
+            1
+          ]
+        ],
+        "serialize_or_clarify": [
+          [
+            0,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ext_conc_04",
+      "category": "complex",
+      "dimension": "concurrency",
+      "user_input": "Dim the bedroom lights, brighten the kitchen lights, warm up the bathroom, and play music in the living room",
+      "required_intents": [
+        {
+          "intent": "Dim bedroom lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Brighten kitchen lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Warm up the bathroom",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Play music in the living room",
+          "device_type": "audio"
+        }
+      ],
+      "note": "All four tasks are independent and can run in parallel",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "All four independent actions are done",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "bedroom",
+          "kitchen",
+          "bathroom",
+          "living room"
+        ],
+        "conflicts": []
+      },
+      "expected_concurrency": {
+        "parallel": [
+          [
+            0,
+            1,
+            2,
+            3
+          ]
+        ],
+        "serialize_or_clarify": []
+      }
+    },
+    {
+      "id": "ext_conc_05",
+      "category": "simple",
+      "dimension": "concurrency",
+      "user_input": "Play my workout playlist and also play the meditation sounds",
+      "required_intents": [
+        {
+          "intent": "Play workout playlist",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Play meditation sounds",
+          "device_type": "audio"
+        }
+      ],
+      "note": "Two audio contents for the same speaker",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The system notices that both need the same speaker and asks, or plays one after the other",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": [
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      "expected_concurrency": {
+        "parallel": [],
+        "serialize_or_clarify": [
+          [
+            0,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ext_conc_06",
+      "category": "moderate",
+      "dimension": "concurrency",
+      "user_input": "Set a 10-minute timer for the pasta, a 25-minute timer for the sauce, and an alarm for 6 am tomorrow",
+      "required_intents": [
+        {
+          "intent": "Set 10-minute pasta timer",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Set 25-minute sauce timer",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Set alarm for 6 am tomorrow",
+          "device_type": "clock"
+        }
+      ],
+      "note": "Several timers on one clock do not conflict",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Two timers and an alarm are set",
+      "annotation": {
+        "deps": [],
+        "temporal": [
+          "10-minute",
+          "25-minute",
+          "6 am tomorrow"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "expected_concurrency": {
+        "parallel": [
+          [
+            0,
+            1,
+            2
+          ]
+        ],
+        "serialize_or_clarify": []
+      }
+    },
+    {
+      "id": "ext_conc_07",
+      "category": "complex",
+      "dimension": "concurrency",
+      "user_input": "Show my schedule on the TV, and meanwhile check the weather and what's in the fridge",
+      "required_intents": [
+        {
+          "intent": "Get the schedule",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Show the schedule on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Check the weather",
+          "device_type": "search"
+        },
+        {
+          "intent": "Check fridge contents",
+          "device_type": "fridge"
+        }
+      ],
+      "note": "Calendar, weather and fridge can run in parallel; the display waits for the calendar",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains the schedule from calendar"
+        ]
+      },
+      "expected_final_output": "The schedule is shown, and the weather and fridge contents are reported",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [
+          "meanwhile"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "expected_concurrency": {
+        "parallel": [
+          [
+            0,
+            2,
+            3
+          ]
+        ],
+        "serialize_or_clarify": []
+      }
+    },
+    {
+      "id": "ext_conc_08",
+      "category": "moderate",
+      "dimension": "concurrency",
+      "user_input": "Turn on all the lights, set every room to 21 degrees, and start the morning playlist, all at once",
+      "required_intents": [
+        {
+          "intent": "Turn on all lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set every room to 21 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Start morning playlist",
+          "device_type": "audio"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Audio obtains the playlist from search"
+        ]
+      },
+      "expected_final_output": "All three actions are done",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            2
+          ]
+        ],
+        "temporal": [
+          "all at once"
+        ],
+        "spatial": [
+          "all the lights",
+          "every room"
+        ],
+        "conflicts": []
+      },
+      "expected_concurrency": {
+        "parallel": [
+          [
+            0,
+            1,
+            2
+          ]
+        ],
+        "serialize_or_clarify": []
+      }
+    },
+    {
+      "id": "ext_fail_01",
+      "category": "moderate",
+      "dimension": "failure_recovery",
+      "user_input": "Dim the bedroom lights, set the bedroom to 20 degrees, and play sleep sounds",
+      "required_intents": [
+        {
+          "intent": "Dim bedroom lights",
+          "device_type": "light"
+        },
+        {
+          "intent": "Set bedroom to 20 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Play sleep sounds",
+          "device_type": "audio"
+        }
+      ],
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "Lights and sleep sounds are done; the thermostat failure is reported",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "bedroom",
+          "bedroom"
+        ],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 1,
+        "device_type": "thermostat",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [
+          0,
+          2
+        ],
+        "must_report": [
+          1
+        ],
+        "must_replan": []
+      }
+    },
+    {
+      "id": "ext_fail_02",
+      "category": "moderate",
+      "dimension": "failure_recovery",
+      "user_input": "Find a lasagna recipe, show it on the TV, and set a 1-hour timer",
+      "required_intents": [
+        {
+          "intent": "Find lasagna recipe",
+          "device_type": "search"
+        },
+        {
+          "intent": "Show recipe on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Set 1-hour timer",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains recipe from search"
+        ]
+      },
+      "expected_final_output": "The recipe is found and the timer set; the TV failure is reported and the recipe is offered another way",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [
+          "1-hour"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 1,
+        "device_type": "display",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [
+          0,
+          2
+        ],
+        "must_report": [
+          1
+        ],
+        "must_replan": []
+      }
+    },
+    {
+      "id": "ext_fail_03",
+      "category": "simple",
+      "dimension": "failure_recovery",
+      "user_input": "Check what's in the fridge and find a recipe with those ingredients",
+      "required_intents": [
+        {
+          "intent": "Check fridge contents",
+          "device_type": "fridge"
+        },
+        {
+          "intent": "Find recipe with those ingredients",
+          "device_type": "search"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Search obtains ingredients from fridge"
+        ]
+      },
+      "expected_final_output": "The fridge failure is reported; no recipe is presented as if the ingredients were known",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [],
+        "spatial": [],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 0,
+        "device_type": "fridge",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [],
+        "must_report": [
+          0
+        ],
+        "must_replan": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "ext_fail_04",
+      "category": "simple",
+      "dimension": "failure_recovery",
+      "user_input": "Look up my first meeting tomorrow and set an alarm one hour before it",
+      "required_intents": [
+        {
+          "intent": "Look up tomorrow's first meeting",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Set alarm one hour before the meeting",
+          "device_type": "clock"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Clock obtains meeting time from calendar"
+        ]
+      },
+      "expected_final_output": "The calendar failure is reported; no alarm is set at a guessed time",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [
+          "tomorrow",
+          "one hour before it"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 0,
+        "device_type": "calendar",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [],
+        "must_report": [
+          0
+        ],
+        "must_replan": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "ext_fail_05",
+      "category": "simple",
+      "dimension": "failure_recovery",
+      "user_input": "Play jazz in the living room and turn on the living room lights",
+      "required_intents": [
+        {
+          "intent": "Play jazz in the living room",
+          "device_type": "audio"
+        },
+        {
+          "intent": "Turn on living room lights",
+          "device_type": "light"
+        }
+      ],
+      "note": "The audio agent reports success, but the observed state shows no music playing",
+      "collaboration": {
+        "is_needed": false
+      },
+      "expected_final_output": "The lights are on; the system notices that no music is playing and reports it",
+      "annotation": {
+        "deps": [],
+        "temporal": [],
+        "spatial": [
+          "living room",
+          "living room"
+        ],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 0,
+        "device_type": "audio",
+        "mode": "no_effect"
+      },
+      "expected_recovery": {
+        "must_complete": [
+          1
+        ],
+        "must_report": [
+          0
+        ],
+        "must_replan": []
+      }
+    },
+    {
+      "id": "ext_fail_06",
+      "category": "moderate",
+      "dimension": "failure_recovery",
+      "user_input": "Set the living room to 22 degrees, then put a movie on the TV, then dim the lights",
+      "required_intents": [
+        {
+          "intent": "Set living room to 22 degrees",
+          "device_type": "thermostat"
+        },
+        {
+          "intent": "Play a movie on TV",
+          "device_type": "display"
+        },
+        {
+          "intent": "Dim the lights",
+          "device_type": "light"
+        }
+      ],
+      "note": "'Then' orders the steps, but the movie and the lights do not depend on the temperature",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Display obtains movie from search"
+        ]
+      },
+      "expected_final_output": "Movie and lights are done; the thermostat failure is reported without undoing or repeating the rest",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            1
+          ]
+        ],
+        "temporal": [
+          "then",
+          "then"
+        ],
+        "spatial": [
+          "living room"
+        ],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 0,
+        "device_type": "thermostat",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [
+          1,
+          2
+        ],
+        "must_report": [
+          0
+        ],
+        "must_replan": []
+      }
+    },
+    {
+      "id": "ext_fail_07",
+      "category": "simple",
+      "dimension": "failure_recovery",
+      "user_input": "Check the weather, and if it's going to rain, add 'take an umbrella' to tomorrow morning in my calendar",
+      "required_intents": [
+        {
+          "intent": "Check the weather",
+          "device_type": "search"
+        },
+        {
+          "intent": "Add umbrella reminder if it rains",
+          "device_type": "calendar"
+        }
+      ],
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Calendar obtains the forecast from search"
+        ]
+      },
+      "expected_final_output": "The weather failure is reported; no reminder is added or skipped silently",
+      "annotation": {
+        "deps": [
+          [
+            0,
+            1
+          ]
+        ],
+        "temporal": [
+          "tomorrow morning"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 0,
+        "device_type": "search",
+        "mode": "unavailable"
+      },
+      "expected_recovery": {
+        "must_complete": [],
+        "must_report": [
+          0
+        ],
+        "must_replan": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "ext_fail_08",
+      "category": "moderate",
+      "dimension": "failure_recovery",
+      "user_input": "Start a 25-minute focus timer, block the next hour in my calendar, and play focus music",
+      "required_intents": [
+        {
+          "intent": "Start 25-minute focus timer",
+          "device_type": "clock"
+        },
+        {
+          "intent": "Block the next hour in calendar",
+          "device_type": "calendar"
+        },
+        {
+          "intent": "Play focus music",
+          "device_type": "audio"
+        }
+      ],
+      "note": "After planning, someone else adds a meeting in the next hour: the plan for the calendar is outdated",
+      "collaboration": {
+        "is_needed": true,
+        "success_conditions": [
+          "Audio obtains focus music from search"
+        ]
+      },
+      "expected_final_output": "Timer and music are done; the clash with the new meeting is detected and reported instead of overwriting it",
+      "annotation": {
+        "deps": [
+          [
+            "search",
+            2
+          ]
+        ],
+        "temporal": [
+          "25-minute",
+          "the next hour"
+        ],
+        "spatial": [],
+        "conflicts": []
+      },
+      "injected_failure": {
+        "intent": 1,
+        "device_type": "calendar",
+        "mode": "state_changed"
+      },
+      "expected_recovery": {
+        "must_complete": [
+          0,
+          2
+        ],
+        "must_report": [
+          1
+        ],
+        "must_replan": []
+      }
+    }
+  ]
+}

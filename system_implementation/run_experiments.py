@@ -13,12 +13,16 @@ from pathlib import Path
 
 from external_benchmarks.common import BENCHMARKS, SYSTEMS, write_json
 from configuration import CONFIG_PATH, activate_config, config_path as configured_path, load_config
+from run_benchmark import DIMENSIONS
 
 ROOT = Path(__file__).resolve().parent
 
 
 def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, category="all",
-                   limit=0, case_ids=(), output_dir=None, config_path=None, settings=None, resume=False):
+                   limit=0, case_ids=(), output_dir=None, config_path=None, settings=None, resume=False,
+                   dataset="original", dimension=None):
+    if benchmark != "dexa" and (dataset != "original" or dimension):
+        raise ValueError("--dataset and --dimension are available only for --benchmark dexa.")
     activate_config(config_path)
     output = Path(output_dir or Path(configured_path(load_config()["experiments"]["output_dir"])) / "single")
     output.mkdir(parents=True, exist_ok=True)
@@ -70,7 +74,7 @@ def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, c
         if benchmark not in system.SUPPORTED_BENCHMARKS:
             raise NotImplementedError(f"{system_path} does not support {benchmark}; see external_benchmarks/README.md")
         return run(category, benchmark_path, system=system, config_path=config_path, limit=limit,
-                   case_ids=case_ids, output_dir=output, **settings)
+                   case_ids=case_ids, output_dir=output, dataset=dataset, dimension=dimension, **settings)
     except Exception as exc:
         if not isinstance(exc, (FileExistsError, ValueError)):
             (output / "failure.json").write_text(json.dumps({"error": f"{type(exc).__name__}: {exc}",
@@ -80,7 +84,10 @@ def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, c
 
 def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all", limit=0, case_ids=(),
                     runs=None, repetitions=None, config_path=None, output_dir=None,
-                    benchmark_paths=None, benchmark_pythons=None, resume=False, timestamped=True):
+                    benchmark_paths=None, benchmark_pythons=None, resume=False, timestamped=True,
+                    dataset="original", dimension=None):
+    if benchmark != "dexa" and (dataset != "original" or dimension):
+        raise ValueError("--dataset and --dimension are available only for --benchmark dexa.")
     if runs is None or any(run.get("config") is None for run in runs):
         activate_config(config_path)
     defaults = load_config()["experiments"]
@@ -116,6 +123,8 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
                                     for b in benchmarks if paths.get(b) or benchmark_path},
                 "benchmark_pythons": {b: str(pythons.get(b) or sys.executable) for b in benchmarks}}
     manifest = json.loads(json.dumps(manifest, default=str))
+    if benchmark == "dexa":
+        manifest.update(dataset=dataset, dimension=dimension)
     if resume and (output / "runs.json").exists():
         if json.loads((output / "runs.json").read_text()) != manifest:
             raise ValueError("Resume refused: experiment selection/settings changed.")
@@ -150,6 +159,10 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
                     participant_config = output / "experiment_config.toml"
                 if participant_config:
                     command += ["--config", str(Path(participant_config).resolve())]
+                if selected_benchmark == "dexa":
+                    command += ["--dataset", dataset]
+                    if dimension:
+                        command += ["--dimension", dimension]
                 path = paths.get(selected_benchmark) or benchmark_path
                 if path:
                     command += ["--benchmark-path", str(Path(path).resolve())]
@@ -204,6 +217,9 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=defaults["limit"])
     parser.add_argument("--repetitions", type=int, default=defaults["repetitions"])
     parser.add_argument("--case-id", dest="case_ids", action="append", default=[])
+    parser.add_argument("--dataset", choices=("original", "extension", "all"), default="original",
+                        help="DEXA case set: 60 original, 40 extension, or all 100")
+    parser.add_argument("--dimension", choices=DIMENSIONS, help="Filter DEXA extension cases")
     parser.add_argument("--system", default=defaults["system"] or None, help="mas, react, sage, dsia, module:factory, or a legacy MAS Python file")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--env-file", type=Path)
@@ -216,7 +232,7 @@ if __name__ == "__main__":
         load_env(args.env_file)
     options = dict(benchmark=args.benchmark, benchmark_path=args.benchmark_path,
                    category=args.category, limit=args.limit, case_ids=args.case_ids,
-                   config_path=args.config)
+                   config_path=args.config, dataset=args.dataset, dimension=args.dimension)
     try:
         if args.resume and not args.output_dir:
             raise ValueError("--resume requires the original --output-dir.")
