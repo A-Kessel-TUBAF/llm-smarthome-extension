@@ -86,12 +86,18 @@ class MAS:
                 if "experiment_config" in event:
                     effective = event["experiment_config"]["settings"]
         except Exception as exc:
-            report.update(error=f"{type(exc).__name__}: {exc}", exception=type(exc).__name__)
+            from langgraph.errors import GraphRecursionError
+            model_failure = isinstance(exc, GraphRecursionError) or any(
+                call.get("error") and "raw_response" in call for call in report.get("llm_calls", []))
+            report.update(error=f"{type(exc).__name__}: {exc}", exception=type(exc).__name__,
+                          technical_error=not model_failure)
+        report["technical_error"] = report.get("technical_error", False) or any(
+            call.get("technical_error") for call in report.get("llm_calls", []))
         report["status"] = "error" if report.get("error") else "finished"
         report["settings"] = effective
         if episode.benchmark == "homebench":
             try:
                 report["prediction"] = homebench_prediction(report, home)
             except (KeyError, TypeError, ValueError) as exc:
-                report.update(prediction="{}", status="error", error=f"PredictionError: {exc}")
+                report.update(prediction="{}", status="error", error=f"PredictionError: {exc}", technical_error=True)
         return report

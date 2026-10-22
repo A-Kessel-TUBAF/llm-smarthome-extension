@@ -862,6 +862,7 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
         return result
     except Exception as exc:
         call["error"] = f"{type(exc).__name__}: {exc}"
+        call["technical_error"] = "raw_response" not in call
         raise
     finally:
         call["latency_s"] = time.perf_counter() - started

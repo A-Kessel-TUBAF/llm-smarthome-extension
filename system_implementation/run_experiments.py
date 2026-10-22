@@ -153,6 +153,8 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
                            "--category", category, "--limit", str(limit), "--output-dir", str(destination),
                            "--repetitions", "1",
                            "--settings-json", json.dumps(run.get("settings", {}))]
+                if selected_benchmark != "dexa":
+                    command += ["--" + selected_benchmark + "-python", command[0]]
                 selected_config = str(Path(os.getenv("SMARTHOME_CONFIG") or CONFIG_PATH).resolve())
                 participant_config = run.get("config")
                 if participant_config is None and (not wrapped or name == "mas"):

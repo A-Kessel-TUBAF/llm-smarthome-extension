@@ -74,9 +74,6 @@ For the included DEXA dataset:
 python run_experiments.py --system mas --benchmark dexa
 ```
 
-DEXA records executions without an automatic success score. Resume is supported
-for the three external benchmarks. Native scores from different benchmarks are
-reported separately in `comparison.json` and `comparison.csv`.
 
 ## Files
 

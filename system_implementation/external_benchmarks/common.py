@@ -107,7 +107,8 @@ def system_report(system, episode):
         if not isinstance(report, dict):
             raise TypeError("run_episode must return a report dictionary.")
     except Exception as exc:
-        report = {"status": "error", "error": f"{type(exc).__name__}: {exc}", "exception": type(exc).__name__}
+        report = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
+                  "exception": type(exc).__name__, "technical_error": True}
     report.setdefault("answer", "")
     report.setdefault("llm_calls", [])
     report.setdefault("model_usage", summarize_calls(report["llm_calls"]))

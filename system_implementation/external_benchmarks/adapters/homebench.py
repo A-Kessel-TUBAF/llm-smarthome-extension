@@ -124,7 +124,8 @@ def summarize(rows):
     predicted = sum(row["score"]["predicted"] for row in rows)
     expected = sum(row["score"]["expected"] for row in rows)
     precision, recall = tp / predicted if predicted else 0, tp / expected if expected else 0
-    return {"cases": count, "exact_match": sum(row["score"]["exact_match"] for row in rows) / count if count else 0,
+    return {"cases": count, "incomplete_cases": sum(not row["completed"] for row in rows),
+            "exact_match": sum(row["score"]["exact_match"] for row in rows) / count if count else 0,
             "precision": precision, "recall": recall,
             "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0,
             "errors": sum(row.get("error") is not None for row in rows),
@@ -170,10 +171,10 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
         row = {"id": case["id"], "home_id": case["home_id"], "category": case["type"], "input": case["input"],
                "prediction": predicted, "expected": case["output"], "score": score(predicted, case["output"]),
                "latency_s": elapsed, "error": error, "exception": exception, "settings": report.get("settings", settings), "report": report,
-               "native_calls": session.calls, "completed": not report.get("backend_unavailable", False),
+               "native_calls": session.calls,
+               "technical_error": bool(report.get("technical_error") or report.get("backend_unavailable")),
                "model_usage": report["model_usage"]}
-        if error:
-            row["score"]["exact_match"] = False
+        row["completed"] = not row["technical_error"]
         rows.append(row)
         write_json(case_file(output, case["id"]), row)
         write_json(output / "summary.json", {"overall": summarize(rows),
@@ -184,6 +185,6 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
             raise RuntimeError("Model backend unavailable; stopped after saving this case. Configure the endpoint, then --resume.")
     summary = {"overall": summarize(rows), "by_category": {
         name: summarize([row for row in rows if row["category"] == name]) for name in sorted({row["category"] for row in rows})},
-        "complete": True}
+        "complete": all(row["completed"] for row in rows)}
     write_json(output / "summary.json", summary)
     return summary

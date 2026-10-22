@@ -118,7 +118,8 @@ class SAGE:
                         text, call = self.client.generate(message["messages"], timeout=remaining, stop=message.get("stop"))
                     except BackendUnavailable as exc:
                         report["llm_calls"].append(exc.call)
-                        report.update(status="backend_error", error=str(exc), backend_unavailable=True)
+                        report.update(status="timeout" if exc.episode_timeout else "backend_error",
+                                      error=str(exc), backend_unavailable=not exc.episode_timeout)
                         break
                     report["llm_calls"].append(call)
                     send({"result": text})
@@ -144,7 +145,8 @@ class SAGE:
                     raise ValueError("Unknown SAGE bridge message: " + str(kind))
         except Exception as exc:
             report.update(status="timeout" if isinstance(exc, TimeoutError) else "error",
-                          error=f"{type(exc).__name__}: {exc}", exception=type(exc).__name__)
+                          error=f"{type(exc).__name__}: {exc}", exception=type(exc).__name__,
+                          technical_error=not isinstance(exc, TimeoutError))
         finally:
             if process.poll() is None:
                 process.terminate()

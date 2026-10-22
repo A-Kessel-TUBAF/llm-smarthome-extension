@@ -33,7 +33,7 @@ For Home Assistant, use the native Assist tools and their targeting instructions
 
 
 class BackendUnavailable(RuntimeError):
-    pass
+    episode_timeout = False
 
 
 class ChatClient:
@@ -116,6 +116,8 @@ class ChatClient:
             call["error"] = f"Model endpoint unavailable or invalid response ({reason})."
             error = BackendUnavailable(call["error"])
             error.call = call
+            error.episode_timeout = (timeout is not None and timeout <= cfg["request_timeout"] and
+                (isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)))
             raise error from None
         finally:
             call["latency_s"] = time.perf_counter() - started
@@ -165,7 +167,8 @@ class ReAct:
                 report["llm_calls"].append(call)
             except BackendUnavailable as exc:
                 report["llm_calls"].append(exc.call)
-                report.update(status="backend_error", error=str(exc), backend_unavailable=True)
+                report.update(status="timeout" if exc.episode_timeout else "backend_error",
+                              error=str(exc), backend_unavailable=not exc.episode_timeout)
                 break
             messages.append({"role": "assistant", "content": raw})
             try:
