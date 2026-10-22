@@ -1,0 +1,64 @@
+{
+  "schema": 2,
+  "description": "dexa-verified-smarthome finite allocation checker: soundness and completeness of checkAllocation against the declarative AllocationValid, and acyclicity of rank-witnessed graphs. Core Lean only; only propext and Quot.sound are permitted.",
+  "targets": [
+    "AllocationChecker.checkAllocation_sound",
+    "AllocationChecker.checkAllocation_complete",
+    "AllocationChecker.GraphWF.acyclic"
+  ],
+  "definitions": [
+    {"name": "AllocationChecker.AllocationValid"},
+    {"name": "AllocationChecker.checkAllocation"},
+    {"name": "AllocationChecker.CommandValid"},
+    {"name": "AllocationChecker.CommandFits"},
+    {"name": "AllocationChecker.ResourceIndependent"},
+    {"name": "AllocationChecker.Indep"},
+    {"name": "AllocationChecker.KeysDisjoint"},
+    {"name": "AllocationChecker.CmdFootprint"},
+    {"name": "AllocationChecker.opFootprint"},
+    {"name": "AllocationChecker.projectedLoad"},
+    {"name": "AllocationChecker.GraphWF"},
+    {"name": "AllocationChecker.CatalogueWF"},
+    {"name": "AllocationChecker.SnapshotWF"},
+    {"name": "AllocationChecker.DepSatisfied"},
+    {"name": "AllocationChecker.EvidenceValid"},
+    {"name": "AllocationChecker.ArgResolved"},
+    {"name": "AllocationChecker.PreHolds"},
+    {"name": "AllocationChecker.PolicyHolds"},
+    {"name": "AllocationChecker.Eligible"},
+    {"name": "AllocationChecker.InBounds"},
+    {"name": "AllocationChecker.Cmp.Holds"},
+    {"name": "AllocationChecker.AttrPre.at"},
+    {"name": "AllocationChecker.OpOf"},
+    {"name": "AllocationChecker.DeviceOf"},
+    {"name": "AllocationChecker.TaskOf"},
+    {"name": "AllocationChecker.EntryOf"},
+    {"name": "AllocationChecker.DependsOn"},
+    {"name": "AllocationChecker.checkCommand"},
+    {"name": "AllocationChecker.commandFitsB"},
+    {"name": "AllocationChecker.checkIndependence"}
+  ],
+  "permitted_axioms": ["propext", "Quot.sound"],
+  "required_checkers": [
+    "lean-build",
+    "target-exists",
+    "axiom-policy",
+    "sorry-free",
+    "vacuity-probe",
+    "statement-match",
+    "definition-hole",
+    "protected-audit"
+  ],
+  "track": "completed-proof",
+  "toolchain": "leanprover/lean4:v4.33.1",
+  "limits": {
+    "wall_seconds": 900,
+    "memory_mb": 8192,
+    "max_files": 20,
+    "max_source_bytes": 1048576,
+    "jobs": 2
+  },
+  "protected": {
+    "required": true
+  }
+}

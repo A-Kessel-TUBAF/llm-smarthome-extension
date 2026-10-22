@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
+from configuration import config_path as configured_path, load_config
 
 ROOT = Path(__file__).resolve().parent
 
@@ -15,9 +17,9 @@ def run_benchmark(category="all", benchmark_path=None, *, system=None,
     output = Path(output_dir or ROOT / "logs/dexa")
     output.mkdir(parents=True, exist_ok=True)
     if config_path is not None or hasattr(system, "CONFIG_PATH"):
-        config = Path(config_path or system.CONFIG_PATH)
+        config = Path(config_path or os.getenv("SMARTHOME_CONFIG") or system.CONFIG_PATH)
         (output / "experiment_config.toml").write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
-    path = Path(benchmark_path) if benchmark_path else ROOT / "benchmark/benchmark_data.json"
+    path = Path(benchmark_path or configured_path(load_config()["benchmarks"]["dexa"]["path"]))
     (output / "dataset.json").write_text(json.dumps({"path": str(path.resolve()),
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}), encoding="utf-8")
     cases = json.loads(path.read_text(encoding="utf-8"))["test_cases"]

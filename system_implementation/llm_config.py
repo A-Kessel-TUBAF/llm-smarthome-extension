@@ -1,26 +1,38 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from agent_registry import AGENT_REGISTRY
 
-# Reads API keys and settings from a .env file in this folder (if present)
-load_dotenv()
+from configuration import CONFIG_PATH, load_config
 
-DEFAULT_MODEL = os.getenv("LLM_MODEL") or "ollama:gemma2"
-SAME_LLM_FOR_ALL_AGENTS = True
-ROLE_MODELS = dict.fromkeys(
-    ["intent_analysis", "planner", "scheduler", *AGENT_REGISTRY],
-    DEFAULT_MODEL,
-)
-# For individual models: set SAME_LLM_FOR_ALL_AGENTS = False and override entries:
-# ROLE_MODELS["planner"] = "openai:gpt-4o-mini"
-# ROLE_MODELS["lighting"] = "ollama:gemma2"
-_models = {}  # Reuse one client per model; initialize only when needed.
+load_dotenv(Path(__file__).with_name(".env"))
+_models = {}
+MODEL_SETTINGS = {}
+
+
+def configure_models(config_path=None):
+    global DEFAULT_MODEL, SAME_LLM_FOR_ALL_AGENTS, ROLE_MODELS, MODEL_SETTINGS
+    data = load_config(config_path)
+    defaults = load_config(CONFIG_PATH)
+    shared = {**defaults["model"], **(data.get("model", {}) if isinstance(data.get("model"), dict) else {})}
+    roles = {**defaults["mas_models"], **data.get("mas_models", {})}
+    shared["model"] = os.getenv("LLM_MODEL") or shared["model"]
+    if {"model": shared, "roles": roles} != MODEL_SETTINGS:
+        _models.clear()
+    MODEL_SETTINGS = {"model": shared, "roles": roles}
+    DEFAULT_MODEL = shared["model"]
+    SAME_LLM_FOR_ALL_AGENTS = roles["same_for_all"]
+    ROLE_MODELS = dict.fromkeys(["intent_analysis", "planner", "scheduler", *AGENT_REGISTRY], DEFAULT_MODEL)
+    ROLE_MODELS.update(roles.get("roles", {}))
+
+
+configure_models()
 
 API_KEY_VARS = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 SETUP_HINT = (
     "Either install Ollama (https://ollama.com/download) and run `ollama pull gemma2`, "
-    "or use an online API: set LLM_MODEL and its API key in system_implementation/.env " 
+    "or configure model.model in experiment_config.toml and set the provider API key. " 
 )
 
 def model_for_role(role=None):
@@ -38,32 +50,34 @@ def summarize_calls(calls):
 
 
 def get_llm(role=None):
-    """
-    Build the chat model from env vars, so local and online models are interchangeable.
-    LLM_MODEL = "provider:model", e.g.
-        ollama:gemma2                  default, local Ollama
-        openai:gpt-4o-mini             needs OPENAI_API_KEY
-        anthropic:claude-sonnet-5      needs ANTHROPIC_API_KEY
-    OPENAI_BASE_URL = optional, for OpenAI-compatible services 
-    (GWDG Chat AI, OpenRouter, Groq, vLLM, ...)
-    """
+    """Reuse one model client per model ID."""
     model = model_for_role(role)
     if model in _models:
         return _models[model]
     provider = model.split(":", 1)[0]
-    kwargs = {"temperature": 0.0}  # fixed for repeatable benchmark runs
+    cfg = MODEL_SETTINGS["model"]
+    kwargs = {"temperature": cfg["temperature"]}
 
-    # Fail at startup with a clear message, instead of at the first LLM call
     key_var = API_KEY_VARS.get(provider)
     if key_var and not os.getenv(key_var):
         raise RuntimeError(f"LLM_MODEL={model} needs {key_var} to be set (e.g. in .env).")
     if provider == "ollama":
-        kwargs["format"] = "json"  # All roles in the current system return JSON.
-        kwargs["validate_model_on_init"] = True  # checks Ollama is running and the model is pulled        
+        kwargs.update(format="json", validate_model_on_init=True, seed=cfg["seed"],
+                      num_predict=cfg["max_tokens"], num_ctx=cfg["context_window"],
+                      client_kwargs={"timeout": cfg["request_timeout"]})
+        base = os.getenv("OLLAMA_BASE_URL") or cfg["api_base"]
+        if base:
+            kwargs["base_url"] = base
         try:
             _models[model] = init_chat_model(model, **kwargs)
             return _models[model]
         except (ValueError, ConnectionError) as e:
             raise RuntimeError(f"Local model '{model}' is not available.\n{e}\n\n{SETUP_HINT}") from None
+    kwargs.update(max_tokens=cfg["max_tokens"], timeout=cfg["request_timeout"])
+    if provider == "openai":
+        kwargs["seed"] = cfg["seed"]
+        base = os.getenv("OPENAI_BASE_URL") or cfg["api_base"]
+        if base:
+            kwargs["base_url"] = base
     _models[model] = init_chat_model(model, **kwargs)
     return _models[model]

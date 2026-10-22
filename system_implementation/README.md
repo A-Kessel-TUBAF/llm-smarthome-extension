@@ -1,40 +1,98 @@
+# Smart-home systems and evaluation
 
-# Smart Home Multi-Agent System Implementation
+MAS with optional intent analysis, domain agents, contracts, Lean admission and repair.
+External comparisons: ReAct, original SAGE core and a DS-IA architecture adaptation.
 
-Multi-agent system for smart home scenarios using LangGraph and google/gemma-2-9B.
+## Configuration
 
+Edit **`experiment_config.toml`**. No Python edits are needed for normal runs.
 
-## Experiment configuration
+| Section | Settings |
+| --- | --- |
+| `model` | Shared model, endpoint, generation limits, seed and timeouts |
+| `mas_models` | Shared/per-role MAS models |
+| `mas` | Execution, checks, repair, intent analysis and Lean executable |
+| `react`, `sage`, `dsia` | Participant overrides; SAGE checkout and worker |
+| `experiments` | System, benchmark, category, case limit, repetitions and output folder |
+| `benchmarks` | Dataset paths, Python environments and native runtime settings |
+| `judge` | SimuHome evaluation model, endpoint and seeds |
+| `runs` | MAS ablation matrix; each entry overrides only its differences |
 
-Execution defaults are plain values in `experiment_config.toml` (Python 3.11+).
-Loading, overrides and recovery behavior live in `smart_home_langgraph.py`.
-`run_experiments.py` contains the seven experiment runs in its `RUNS` list:
-system file and only the settings that differ from the defaults.
-There is no `--variant` argument. Model selection and credentials remain in
-`llm_config.py` / `.env`.
+Paths in this file are relative to `system_implementation/`. A Python executable
+can also be a command such as `python3.14`. Empty benchmark Python paths use the
+calling interpreter. Each selected environment needs the participant's dependencies.
 
-The project's `run_benchmark.py` handles only our DEXA benchmark. External
-adapters and their device catalogues live in `external_benchmarks/`.
-System selection and experiment metadata are handled in `run_experiments.py`.
-The small standalone CLIs reuse argument definitions from `smart_home_langgraph.py`.
+`model` settings apply to all participants. Add the same keys to `react`, `sage`
+or `dsia` for participant-specific values. MAS uses `mas.recursion_limit`
+instead of the external participants' `episode_timeout`. Set `mas_models.same_for_all = false`
+and add entries under `mas_models.roles` for separate MAS role models.
 
-See [EXPERIMENTS.md](EXPERIMENTS.md) for commands, outputs, additional systems,
-and the limitations of the original implementation for HomeBench and SimuHome.
+CLI flags override configuration. Existing model/path environment variables remain
+supported and override TOML values; explicit participant CLI/JSON settings win.
+`--config another.toml` or `SMARTHOME_CONFIG` selects another central file.
+Older flat participant TOMLs remain accepted.
+
+Keep API keys in the environment or a local `.env`; see `.env.example`.
+MAS reads this project's `.env`. Other participants load it only with
+`--env-file .env`. Remove old model/endpoint entries from `.env` when you want
+the TOML to control them.
+
+## Run
+
+From `system_implementation/`, after installing `requirements.txt`:
 
 ```bash
-python smart_home_langgraph.py --no-repair
-python external_benchmarks/run_benchmark.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
-python run_experiments.py --benchmark homebench --benchmark-path ../HomeBench/dataset --limit 10
+python smart_home_langgraph.py
+python run_experiments.py --system react --benchmark homebench --limit 10
+python run_experiments.py --system dsia --benchmark all
 ```
 
+Configure benchmark paths and Python environments first. SimuHome needs its
+running native server and, for QT1/infeasible cases, a configured judge.
+SAGE also needs its original checkout and separate Python 3.10 environment.
+Installation and evaluation details: [external_benchmarks/README.md](external_benchmarks/README.md).
 
-The DEXA dataset from the original archive is included in `benchmark/`.
-HomeBench data must be downloaded separately. Lean sources are included;
-retain your existing compiled `lean/.lake/` directory or run `cd lean && lake build`.
+With no `--system`, the runner executes the `runs` matrix. Set `experiments.system`
+to select one system by default, or leave it empty for the matrix. `--limit 0`
+runs all selected cases. `--repetitions` overrides the configured count.
+Use a new output directory for a new run; repeat the same command and output
+directory with `--resume` to continue an external benchmark run.
 
-Both benchmark runners save per-call token usage, provider timings and raw
-responses, including format failures. Internal failed plans also count as errors.
-Ollama uses JSON mode uniformly across the seven configurations.
+For the planner-only ablation on all external benchmarks:
+
+```bash
+python run_experiments.py --system mas --benchmark all --settings-json '{"domain_agents_enabled":false,"intent_analysis_enabled":false,"scheduler_mode":"python"}' --output-dir logs/comparison/planner-only
+```
+
+The default matrix includes this as `planner_only`. For a single benchmark, the
+standalone CLI also accepts `--no-domain-agents`. `mas.domain_agents_enabled`
+controls the same switch in TOML; leave its default enabled for matrix comparisons.
+
+For the included DEXA dataset:
+
+```bash
+python run_experiments.py --system mas --benchmark dexa
+```
+
+DEXA records executions without an automatic success score. Resume is supported
+for the three external benchmarks. Native scores from different benchmarks are
+reported separately in `comparison.json` and `comparison.csv`.
+
+## Files
+
+| File/directory | Responsibility |
+| --- | --- |
+| `configuration.py` | Shared TOML loading; no agent dependencies |
+| `smart_home_langgraph.py` | MAS planning, validation, scheduling and execution |
+| `agent_registry.py`, `home_defaults.py` | Default capabilities, contracts and home data |
+| `llm_config.py` | MAS model clients and usage |
+| `run_experiments.py` | Sequential experiment processes and comparison results |
+| `run_benchmark.py` | Included DEXA execution log |
+| `external_benchmarks/` | Native benchmark adapters and independent system wrappers |
+| `lean/` | Allocation checker; build with `lake build` |
+| `assurance/qed_leaf/` | Optional proof audit; see its README |
+| `original/` | Preserved reference implementation |
+
 
 ### Installation
 
@@ -69,18 +127,6 @@ Any `provider:model` supported by LangChain's `init_chat_model` works
 `openai:...` + `OPENAI_BASE_URL` 
 for OpenAI-compatible services, ...).
 
-## Running the System
-
-### Interaction
-```bash
-   jupyter notebook smart_home_langgraph.ipynb
-```
-or 
-```bash
-   python smart_home_langgraph.py
-```
-Type commands like "Set a 20-minute timer and dim the lights". 
-Type `quit` to exit.
 
 ### Evaluation
 
@@ -197,5 +243,5 @@ To add a new device agent:
 - [LangGraph Documentation](https://docs.langchain.com/oss/python/langgraph/overview) - Framework reference
 - [Ollama Documentation](https://ollama.ai/docs) - Model serving
 - [Gemma Documentation](https://ai.google.dev/gemma) - Model details
-## Replacing the previous package
+
 
