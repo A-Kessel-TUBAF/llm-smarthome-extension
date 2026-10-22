@@ -1567,7 +1567,9 @@ def check_allocation(state, batch, snapshot=None):
                       for c in d["preconditions"] if isinstance(c.get("equals"), str)})
     scalar = lambda v: (int(v) if type(v) in (bool, int) and abs(v) <= 10**9 else
                         strings.index(v) + 2 if isinstance(v, str) and v in strings else 0)
-    ops, fields = [], {}
+    ops, fields, int_options = [], {}, {}
+    # Anything but a whole number for whole-number options is sent as null, which Lean rejects.
+    wire = lambda key_, i, v: (str(v) if type(v) is int else None) if i in int_options.get(key_, ()) else v
     for op_key_ in op_keys:
         agent, skill, target, omitted, at_home, footprint_keys = op_key_
         d = registry[agent]["operations"][skill]
@@ -1583,6 +1585,12 @@ def check_allocation(state, batch, snapshot=None):
                 projected.append(name)
                 bounds.append([0, len(schema["enum"]) - 1])
                 types.append({"enum": schema["enum"]})
+            elif "enum" in schema and all(type(v) is int for v in schema["enum"]):
+                # Lean's options are text: whole-number options travel as their decimal text.
+                projected.append(name)
+                bounds.append([0, len(schema["enum"]) - 1])
+                types.append({"enum": [str(v) for v in schema["enum"]]})
+                int_options.setdefault(op_key_, set()).add(len(projected) - 1)
             elif schema.get("type") == "boolean":
                 projected.append(name)
                 bounds.append([0, 1])
@@ -1641,7 +1649,7 @@ def check_allocation(state, batch, snapshot=None):
         agent, skill = a["agent_id"], a["skill_id"]
         target = target_of(args)
         # Typed values as they are; the checker decodes them with the declared types.
-        vals = [args.get(name) for name in fields[keys[aid]]]
+        vals = [wire(keys[aid], i, args.get(name)) for i, name in enumerate(fields[keys[aid]])]
         ranks[aid] = 1 + max((ranks[d] for d in a["depends_on"]), default=-1)
         verified = a["status"] == "success" and a.get("verified", False)
         tasks.append(dict(id=task_ids[aid], status="pending" if aid in selected_ids else
@@ -1662,7 +1670,7 @@ def check_allocation(state, batch, snapshot=None):
                     continue
                 kind = ops[op_ids[keys[aid]]]["types"][index]
                 provider = ref["action_id"]
-                value = lean_value(output_value(actions[provider]["output"], ref["field"]), kind)
+                value = lean_value(wire(keys[aid], index, output_value(actions[provider]["output"], ref["field"])), kind)
                 offset = lean_value(ref.get("add", 0), kind) if isinstance(kind, dict) and "number" in kind else 0
                 view = (ref["field"], kind, value)
                 options = views.setdefault(task_ids[provider], [])

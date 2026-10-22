@@ -80,6 +80,21 @@ HA_HOME = {"rooms": {}, "devices": {e: {"agent_id": a, "room_id": None, "type": 
                                     "parameters": {"HassClimateSetTemperature": SET_TEMPERATURE}}}}
 
 
+# Shaped like external_benchmarks/agent_registry_simuhome.py: a settable enumeration attribute
+# (SimuHome's SystemMode: 0=OFF, 1=AUTO, 3=COOL, 4=HEAT) with the optional scheduling time.
+SYSTEM_MODE = {"device_id": {"type": "string"}, "value": {"type": "integer", "enum": [0, 1, 3, 4]},
+               "start_time": {"type": ["string", "null"], "default": None}}
+SIMUHOME_REGISTRY = {"thermostat": {"agent": "thermostat_agent", "enabled": True, "description": "Climate.",
+                                    "capabilities": ["1.Thermostat.write_SystemMode"], "operations": {
+                                        "1.Thermostat.write_SystemMode": {
+                                            "description": "Write.", "parameters": SYSTEM_MODE, "output": {},
+                                            "reads": [], "writes": ["device.{device_id}.attributes"],
+                                            "preconditions": [], "postconditions": [], "max_retries": 0}}}}
+SIMUHOME_HOME = {"rooms": {}, "services": {}, "devices": {"ac_1": {
+    "agent_id": "thermostat", "room_id": None, "type": "air_conditioner", "skills": ["1.Thermostat.write_SystemMode"],
+    "parameters": {"1.Thermostat.write_SystemMode": SYSTEM_MODE}}}}
+
+
 def action(agent, skill, task_id="a1", **args):
     return dict(task_id=task_id, agent_id=agent, skill_id=skill, arguments=args, depends_on=[],
                 status="running", dispatch_until=time.monotonic() + 30)
@@ -116,6 +131,12 @@ class LeanExternalTests(unittest.TestCase):
 
     def home_assistant(self, batch):
         self.check(HA_HOME, HA_REGISTRY, batch)
+
+    def simuhome(self, batch):
+        self.check(SIMUHOME_HOME, SIMUHOME_REGISTRY, batch)
+
+    def system_mode(self, value):
+        return action("thermostat", "1.Thermostat.write_SystemMode", device_id="ac_1", value=value)
 
     def brightness(self, device, value):
         return action("lighting", "set_brightness", device_id=device, brightness=value)
@@ -168,6 +189,12 @@ class LeanExternalTests(unittest.TestCase):
     def test_whole_home_command_values_are_checked(self):
         with self.assertRaises(ValueError):
             self.home_assistant([set_temperature(50)])
+
+    def test_whole_number_options_are_checked(self):
+        self.simuhome([self.system_mode(3)])
+        for value in (2, "3", True, None):  # not an option; text; yes/no; missing
+            with self.assertRaises(ValueError, msg=value):
+                self.simuhome([self.system_mode(value)])
 
 
 if __name__ == "__main__":
