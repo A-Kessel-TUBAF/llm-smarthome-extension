@@ -1491,6 +1491,18 @@ def lean_value(value, kind):
     raise ValueError(f"Lean reference value {value!r} does not match {kind!r}.")
 
 
+def lean_schema(schema):
+    """The parameter schema Lean checks, and whether null (an omitted optional value) is allowed."""
+    types = schema.get("type")
+    if isinstance(types, list) and "null" in types:
+        rest = [t for t in types if t != "null"]
+        return ({**schema, "type": rest[0]} if len(rest) == 1 else {}), True
+    options = [s for s in schema.get("anyOf", []) if s.get("type") != "null"]
+    if "anyOf" in schema and len(options) == len(schema["anyOf"]) - 1:
+        return (options[0] if len(options) == 1 else {}), True
+    return schema, False
+
+
 def check_allocation(state, batch, snapshot=None):
     """Vaibhav's unchanged checker over a finite registry projection; rich contracts stay in Python.
     Arguments are sent as typed values (numbers, booleans, enum strings) together with their
@@ -1505,10 +1517,22 @@ def check_allocation(state, batch, snapshot=None):
     registry = state["agent_registry"]
     actions = {**state["action_graph"], **{a["task_id"]: a for a in batch}}
     agents = sorted(registry)
-    op_keys = [(agent, skill) for agent in agents for skill in sorted(registry[agent]["operations"])]
-    op_ids = {key: i for i, key in enumerate(op_keys)}
     entities = {f"{scope}.{i}": e for section, scope in (("devices", "device"), ("services", "service"))
                 for i, e in state["home_config"][section].items()}
+    target_of = lambda args: "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
+
+    def op_key(a):
+        # One Lean operation per device whose own schema has limits/options (external benchmarks),
+        # and per set of omitted optional arguments, since Lean's arguments are positional.
+        target = target_of(a["arguments"])
+        own = entities.get(target, {}).get("parameters", {}).get(a["skill_id"])
+        schema = own if own is not None else registry[a["agent_id"]]["operations"][a["skill_id"]]["parameters"]
+        omitted = tuple(sorted(n for n, p in schema.items() if lean_schema(p)[1] and a["arguments"].get(n) is None))
+        return a["agent_id"], a["skill_id"], target if own is not None else None, omitted
+
+    keys = {aid: op_key(a) for aid, a in actions.items()}
+    op_keys = sorted(set(keys.values()), key=lambda k: (k[0], k[1], k[2] or "", k[3]))
+    op_ids = {key: i for i, key in enumerate(op_keys)}
     dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}))}
     attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | {
         k.rsplit('.', 1)[-1] for card in registry.values() for d in card["operations"].values()
@@ -1522,10 +1546,15 @@ def check_allocation(state, batch, snapshot=None):
     scalar = lambda v: (int(v) if type(v) in (bool, int) and abs(v) <= 10**9 else
                         strings.index(v) + 2 if isinstance(v, str) and v in strings else 0)
     ops, fields = [], {}
-    for agent, skill in op_keys:
+    for op_key_ in op_keys:
+        agent, skill, target, omitted = op_key_
         d = registry[agent]["operations"][skill]
+        parameters = entities[target]["parameters"][skill] if target else d["parameters"]
         projected, bounds, types = [], [], []
-        for name, schema in d["parameters"].items():
+        for name, schema in parameters.items():
+            schema, optional = lean_schema(schema)
+            if optional and name in omitted:
+                continue
             if "enum" in schema and all(isinstance(v, str) for v in schema["enum"]):
                 projected.append(name)
                 bounds.append([0, len(schema["enum"]) - 1])
@@ -1535,12 +1564,12 @@ def check_allocation(state, batch, snapshot=None):
                 bounds.append([0, 1])
                 types.append("bool")
             elif schema.get("type") in ("integer", "number"):
-                values = [schema[k] for k in ("minimum", "maximum") if k in schema] + [a["arguments"][name] for a in actions.values()
-                    if (a["agent_id"], a["skill_id"]) == (agent, skill) and type(a["arguments"].get(name)) in (int, float)
+                values = [schema[k] for k in ("minimum", "maximum") if k in schema] + [a["arguments"][name] for aid, a in actions.items()
+                    if keys[aid] == op_key_ and type(a["arguments"].get(name)) in (int, float)
                     and math.isfinite(a["arguments"][name])]
                 for a in batch:
                     ref = a.get("argument_sources", {}).get(name)
-                    if (a["agent_id"], a["skill_id"]) == (agent, skill) and ref and ref.get("format") != "text":
+                    if keys[a["task_id"]] == op_key_ and ref and ref.get("format") != "text":
                         values.extend([output_value(actions[ref["action_id"]]["output"], ref["field"]), ref.get("add", 0)])
                 values = [v for v in values if type(v) in (int, float) and math.isfinite(v)]
                 scale = math.lcm(*(Fraction(str(v)).denominator for v in values))
@@ -1550,7 +1579,7 @@ def check_allocation(state, batch, snapshot=None):
                     bounds.append([math.ceil(Fraction(str(schema["minimum"])) * scale) if "minimum" in schema else -10**9,
                                    math.floor(Fraction(str(schema["maximum"])) * scale) if "maximum" in schema else 10**9])
                     types.append({"number": scale})
-        fields[(agent, skill)] = projected
+        fields[op_key_] = projected
         pre, reads = [], set(d["reads"])
         for c in d["preconditions"]:
             if "state" not in c:
@@ -1560,14 +1589,15 @@ def check_allocation(state, batch, snapshot=None):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "ge", -10**9])
             elif "equals" in c and type(c["equals"]) in (bool, int, str):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "eq", scalar(c["equals"])])
-        ops.append(dict(id=op_ids[(agent, skill)], cap=agents.index(agent), bounds=bounds, types=types,
+        ops.append(dict(id=op_ids[op_key_], cap=agents.index(agent), bounds=bounds, types=types,
                         reads=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads}),
                         writes=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]}),
                         excl=[attr_ids["__target__"]], shared_reads=[], pre=pre,
                         coupled=False, load_base=0, load_per_unit=0))
     devices = [dict(id=dev_ids[name], caps=[agents.index(e["agent_id"])],
-                    ops=[op_ids[(e["agent_id"], skill)] for skill in e["skills"]
-                         if registry[e["agent_id"]]["enabled"] and skill in registry[e["agent_id"]]["capabilities"]])
+                    ops=[i for (agent, skill, target, _), i in op_ids.items() if agent == e["agent_id"]
+                         and target in (None, name) and skill in e["skills"]
+                         and registry[agent]["enabled"] and skill in registry[agent]["capabilities"]])
                for name, e in entities.items()]
     ranks, tasks, evidence, commands = {}, [], [], []
     views, references = {}, []
@@ -1576,14 +1606,14 @@ def check_allocation(state, batch, snapshot=None):
         a = actions[aid]
         args = a["arguments"]
         agent, skill = a["agent_id"], a["skill_id"]
-        target = "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
+        target = target_of(args)
         # Typed values as they are; the checker decodes them with the declared types.
-        vals = [args.get(name) for name in fields[(agent, skill)]]
+        vals = [args.get(name) for name in fields[keys[aid]]]
         ranks[aid] = 1 + max((ranks[d] for d in a["depends_on"]), default=-1)
         verified = a["status"] == "success" and a.get("verified", False)
         tasks.append(dict(id=task_ids[aid], status="pending" if aid in selected_ids else
                           "verified" if verified else "failed" if a["status"] in {"failed", "blocked"} else "pending",
-                          op=op_ids[(agent, skill)], device=dev_ids[target],
+                          op=op_ids[keys[aid]], device=dev_ids[target],
                           # Only the batch's tasks need their arguments (for the contract check).
                           args=[{"lit": v} for v in vals] if aid in selected_ids else [],
                           deps=[task_ids[d] for d in a["depends_on"]], rank=ranks[aid], pre=[], deadline=10**12))
@@ -1591,12 +1621,12 @@ def check_allocation(state, batch, snapshot=None):
             evidence.append(dict(task=task_ids[aid], verified=True, valid_until=int(a["valid_until"]), output=None,
                                  basis=[[*key(k), v] for k, v in a["evidence_versions"].items()]))
         if aid in selected_ids:
-            commands.append(dict(task=task_ids[aid], device=dev_ids[target], op=op_ids[(agent, skill)], args=vals))
-            for index, name in enumerate(fields[(agent, skill)]):
+            commands.append(dict(task=task_ids[aid], device=dev_ids[target], op=op_ids[keys[aid]], args=vals))
+            for index, name in enumerate(fields[keys[aid]]):
                 ref = a.get("argument_sources", {}).get(name)
                 if not ref or ref.get("format") == "text":
                     continue
-                kind = ops[op_ids[(agent, skill)]]["types"][index]
+                kind = ops[op_ids[keys[aid]]]["types"][index]
                 provider = ref["action_id"]
                 value = lean_value(output_value(actions[provider]["output"], ref["field"]), kind)
                 offset = lean_value(ref.get("add", 0), kind) if isinstance(kind, dict) and "number" in kind else 0
