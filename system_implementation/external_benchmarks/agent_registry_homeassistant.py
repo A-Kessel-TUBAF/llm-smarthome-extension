@@ -1,5 +1,6 @@
 """Domain agents using Home Assistant's native Assist tools and schemas."""
 from copy import deepcopy
+from jsonschema import Draft202012Validator
 
 GROUPS = {"light": "lighting", "climate": "thermostat", "media_player": "audio_system",
           "fan": "air_quality", "cover": "covers", "lock": "locks", "todo": "lists",
@@ -53,8 +54,12 @@ def build_home(session):
             parameters = deepcopy(props)
             for name, definition in list(parameters.items()):
                 # The system's parameter format marks optional arguments with a default.
-                if name not in schema.get("required", []) and "default" not in definition:
-                    parameters[name] = {"anyOf": [definition, {"type": "null"}], "default": None}
+                if name not in schema.get("required", []):
+                    default = definition.get("default")
+                    if default is None and not Draft202012Validator(definition).is_valid(None):
+                        parameters[name] = {"anyOf": [definition, {"type": "null"}], "default": None}
+                    else:
+                        parameters[name].setdefault("default", default)
             parameters = {"service_id": {"type": "string"}, **parameters}
             read_only = tool.annotations.read_only
             affected = all_keys if tool.integration in {"intent", "homeassistant"} else keys

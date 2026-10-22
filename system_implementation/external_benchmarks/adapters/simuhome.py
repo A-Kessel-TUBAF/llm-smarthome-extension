@@ -3,6 +3,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -184,8 +185,14 @@ class Judge:
                 "input_tokens": None, "output_tokens": None}
         started = time.perf_counter()
         try:
+            if self.model.split(":")[0] == "qwen3":
+                messages = deepcopy(messages)
+                messages[-1].content += "\n/no_think"
             answer = self.provider.generate(messages)
             call["raw_response"] = answer
+            answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
+            if not answer:
+                raise ValueError("Judge returned no verdict.")
             return answer
         except Exception as exc:
             call["error"] = f"{type(exc).__name__}: {exc}"

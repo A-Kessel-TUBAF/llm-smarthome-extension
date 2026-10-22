@@ -1,5 +1,6 @@
 """Native SimuHome commands and writable attributes, discovered per device."""
 import inspect
+from enum import IntEnum
 
 
 GROUPS = {
@@ -34,7 +35,8 @@ def command_parameters(command):
     """Signatures come from SimuHome itself; do not guess Matter argument names."""
     parameters = {}
     for name, param in inspect.signature(command).parameters.items():
-        schema = {"type": TYPES[param.annotation]} if param.annotation in TYPES else {}
+        kind = TYPES.get(param.annotation, TYPE_NAMES.get(param.annotation))
+        schema = {"type": kind} if kind else {}
         if param.default is not inspect.Parameter.empty:
             schema["default"] = param.default
             if param.default is None and "type" in schema:
@@ -124,6 +126,11 @@ def build_home(session):
                         if "enum_values" in metadata:
                             schema = {"enum": list(metadata["enum_values"].values()),
                                       "description": str(metadata["enum_values"])}
+                        elif isinstance(native_cluster.attributes.get(attribute), IntEnum):
+                            # Allowed values from SimuHome's own enumeration, e.g. SystemMode.
+                            members = list(type(native_cluster.attributes[attribute]))
+                            schema = {"type": "integer", "enum": [int(m) for m in members],
+                                      "description": ", ".join(f"{int(m)}={m.name}" for m in members)}
                         methods.append(("write_" + attribute, "write_attribute", {"value": schema}))
                     for name, tool, parameters in methods:
                         skill = f"{endpoint}.{cluster_id}.{name}"

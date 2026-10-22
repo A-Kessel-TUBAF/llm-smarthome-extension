@@ -25,6 +25,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command, Send, interrupt
 from agent_registry import AGENT_REGISTRY
+from home_assistant import HomeAssistant
 from home_defaults import HOME_DEFAULTS, SEARCH_FIXTURES
 
 SUPPORTED_BENCHMARKS = {"dexa", "homebench", "simuhome", "homeassistant"}
@@ -302,6 +303,7 @@ def prompt_agents(state, available):
                     card.setdefault("methods_by_type", {})[entity["method_family"]] = methods
                 card[section][entity_id] = {**{k: v for k, v in entity.items()
                     if k not in {"agent_id", "skills", "parameters", "homebench_name", "method_family"}},
+                    "target": {target: entity_id},
                     **({} if entity.get("method_family") else {"methods": methods}), "state": values}
         card.pop("capabilities", None)  # Exact methods remain on each entity.
         for definition in operations.values():
@@ -409,16 +411,60 @@ def search_tool(skill, args, home, now, simulation):
             "results": deepcopy(rows[:args["max_results"]])}
 
 
+def operation_parameters(state, agent, skill, arguments):
+    definition = state["agent_registry"][agent]["operations"][skill]
+    target = "device_id" if "device_id" in definition["parameters"] else "service_id"
+    section = "devices" if target == "device_id" else "services"
+    entity = state["home_config"][section][arguments[target]]
+    if entity["agent_id"] != agent or skill not in entity["skills"]:
+        raise ValueError("Agent, target and method do not match.")
+    return entity.get("parameters", {}).get(skill, definition["parameters"])
+
+
+def relative_arguments(state, task, action):
+    """HomeBench percentages are points; prefer the original request's delta."""
+    args = deepcopy(action.get("arguments", {}))
+    if state["simulation_data"].get("benchmark") != "homebench" or "device_id" not in args:
+        return args
+    device = state["home_config"]["devices"].get(args["device_id"], {})
+    room = state["home_config"]["rooms"].get(device.get("room_id"), {}).get("name", "").lower()
+    kind = device.get("type", "").replace("_", " ").rstrip("s")
+    goal = task.get("goal", {})
+    texts = [state["original_user_input"],
+             " ".join([goal.get("text", task["action"]), *goal.get("constraints", task.get("constraints", []))])]
+    room_names = {name.lower().replace("_", " ") for key, value in state["home_config"]["rooms"].items()
+                  for name in (key, value["name"])}
+    definition = state["agent_registry"][task["agent_id"]]["operations"].get(action["skill_id"], {})
+    for condition in definition.get("postconditions", []):
+        name = condition.get("equals_arg")
+        if not name or name not in args or "state" not in condition:
+            continue
+        for text in texts:
+            clauses = [clause for clause in re.split(r"[,;]|\band\b", text.lower().replace("_", " "))
+                       if name.replace("_", " ") in clause and re.search(r"\b" + re.escape(kind) + r"s?\b", clause)]
+            matching = [clause for clause in clauses if room and room in clause]
+            clauses = matching or (clauses if len(clauses) == 1 and not any(room in clauses[0] for room in room_names) else [])
+            if not clauses:
+                continue
+            match = re.search(r"\b(increase|decrease|raise|lower|reduce)\b.*?\bby\s+(\d+(?:\.\d+)?)", clauses[0])
+            if len(clauses) == 1 and match:
+                delta = Fraction(match[2]) * (-1 if match[1] in {"decrease", "lower", "reduce"} else 1)
+                args[name] = {"from_state": condition["state"].format_map(args),
+                              "add": int(delta) if delta.denominator == 1 else float(delta)}
+            break
+    return args
+
+
 def freeze_goal(task, state):
     """Keep the planner's structured goal unchanged through repairs."""
     if "goal" in task:
         return task["goal"]
-    operations = state["agent_registry"][task["agent_id"]]["operations"]
     requirements = []
     for action in task.get("requirements", task.get("actions", [])):
-        parameters = operations.get(action["skill_id"], {}).get("parameters", {})
+        action = {**action, "arguments": relative_arguments(state, task, action)}
+        parameters = operation_parameters(state, task["agent_id"], action["skill_id"], action["arguments"])
         arguments = {k: deepcopy(v) for k, v in action.get("arguments", {}).items()
-                     if k in parameters and (isinstance(v, dict) and "from_task" in v or
+                     if k in parameters and (isinstance(v, dict) and ("from_task" in v or "from_state" in v) or
                          Draft202012Validator(parameters[k], format_checker=FormatChecker()).is_valid(v))}
         requirements.append({"skill_id": action["skill_id"], "arguments": arguments})
     return deepcopy({"text": task["action"], "scope": task.get("scope", []),
@@ -432,6 +478,12 @@ def output_value(output, field):
     return output
 
 
+def argument_template(action):
+    return {**action.get("arguments", {}), **{
+        name: {k: v for k, v in ref.items() if k in {"from_task", "from_state", "field", "add", "format"}}
+        for name, ref in action.get("argument_sources", {}).items()}}
+
+
 def resolve_arguments(state, action):
     """Bind data to confirmed current outputs; output text never comes from a placeholder."""
     sources, bindings = [], {}
@@ -439,6 +491,15 @@ def resolve_arguments(state, action):
         {**r, "task": {"task_id": r["task_id"].rsplit(":", 1)[0]}}
         for r in state["task_results"]]
     def resolve(name, value):
+        if isinstance(value, dict) and "from_state" in value:
+            previous = action.get("argument_sources", {}).get(name, {})
+            base = previous.get("base_value", state["home_state"][value["from_state"]]["value"])
+            if type(base) not in (int, float) or type(value.get("add")) not in (int, float):
+                raise ValueError("Relative values require a numeric observation and delta.")
+            actual = Fraction(str(base)) + Fraction(str(value["add"]))
+            actual = int(actual) if actual.denominator == 1 else float(actual)
+            bindings[name] = {**deepcopy(value), "base_value": base, "validation": "python"}
+            return actual
         if not isinstance(value, dict) or "from_task" not in value:
             return deepcopy(value)
         source, field = value["from_task"], value["field"]
@@ -467,9 +528,7 @@ def resolve_arguments(state, action):
             return actual if isinstance(actual, str) else json.dumps(actual, ensure_ascii=False, indent=2)
         return deepcopy(actual)
     # Revalidate the original reference on retries, rather than its previous resolved value.
-    arguments = {**action.get("arguments", {}), **{
-        name: {k: v for k, v in ref.items() if k in {"from_task", "field", "add", "format"}}
-        for name, ref in action.get("argument_sources", {}).items()}}
+    arguments = argument_template(action)
     args = {key: resolve(key, value) for key, value in arguments.items()}
     if action["skill_id"] == "show_content":
         goal = action["task"].get("goal", {})
@@ -496,8 +555,9 @@ def check_goal(state, task, actions, *, complete=False):
         if action["skill_id"] != requirement["skill_id"]:
             return False
         arguments = requirement["arguments"]
-        if any(isinstance(v, dict) and "from_task" in v for v in arguments.values()):
-            arguments = resolve_arguments(state, {"task": task, **requirement})[0]
+        if any(isinstance(v, dict) and ("from_task" in v or "from_state" in v) for v in arguments.values()):
+            arguments = resolve_arguments(state, {"task": task, **requirement,
+                                                 "argument_sources": action.get("argument_sources", {})})[0]
         return all(action["arguments"].get(k) == v or
                    k == "content" and action.get("source_actions") and not goal.get("literal_content")
                    for k, v in arguments.items())
@@ -519,6 +579,16 @@ TOOLS = {
                     else search_tool if agent == "search_engine" else device_tool)
     for agent, card in AGENT_REGISTRY.items() for skill in card["capabilities"]
 }
+def home_assistant_setup(home_assistant):
+    """Start state and tools for the devices switched through Home Assistant (home_assistant.py).
+    Use as run_request(text, **home_assistant_setup(HomeAssistant.from_env()))."""
+    observations = {f"device.{device}.power": make_observation(power, source="home_assistant")
+                    for device, power in home_assistant.power_states().items()}
+    tool = home_assistant.power_tool(device_tool)
+    bindings = {(agent, skill): tool for agent, card in AGENT_REGISTRY.items()
+                for skill in ("turn_on", "turn_off") if TOOLS.get((agent, skill)) is device_tool}
+    return dict(observations=observations, tool_bindings=bindings)
+
 UNITS = {"brightness_pct": "%", "color_temperature_k": "K", "volume_pct": "%",
          "target_temperature_c": "degC", "stopwatch_elapsed_seconds": "s"}
 
@@ -531,6 +601,8 @@ def action_footprint(state, action):
         reads.update(condition[k] for k in ("state", "equals_state") if k in condition)
     target_key = "device_id" if "device_id" in definition["parameters"] else "service_id"
     reads = {k.format_map(args) for k in reads}
+    reads.update(value["from_state"] for value in (*args.values(), *action.get("argument_sources", {}).values())
+                 if isinstance(value, dict) and "from_state" in value)
     for dep in action.get("depends_on", []):
         reads.update(state["action_graph"].get(dep, {}).get("evidence_versions", {}))
     return (reads, {k.format_map(args) for k in definition["writes"]},
@@ -657,17 +729,18 @@ def validate_action(state, home=None):
             if not card["enabled"] or skill not in card["capabilities"] or skill not in card["operations"]:
                 raise ValueError("Agent oder Skill ist nicht verfuegbar.")
             definition = card["operations"][skill]
-            for key, schema in definition["parameters"].items():
+            parameters = operation_parameters(state, task["agent_id"], skill, args)
+            for key, schema in parameters.items():
                 if key not in args and "default" in schema:
                     args[key] = deepcopy(schema["default"])
             if state["settings"]["validate_contracts"]:
-                schema = {"type": "object", "properties": definition["parameters"],
-                          "required": list(definition["parameters"]),
+                schema = {"type": "object", "properties": parameters,
+                          "required": list(parameters),
                           "additionalProperties": False}
                 Draft202012Validator(schema, format_checker=FormatChecker()).validate(args)
                 # NaN/Infinity are Python numbers but not valid JSON arguments.
                 json.dumps(args, allow_nan=False)
-            elif set(definition["parameters"]) - args.keys():
+            elif set(parameters) - args.keys():
                 raise ValueError("Pflichtargument fehlt.")
             if state["settings"]["validate_contracts"]:
                 check_goal(state, task, [action])
@@ -679,9 +752,6 @@ def validate_action(state, home=None):
             if target_key == "device_id" and task.get("scope"):
                 if args[target_key] not in task["scope"] and target.get("room_id") not in task["scope"]:
                     raise ValueError("Geraet liegt ausserhalb des zugewiesenen Auftragsbereichs.")
-            if state["settings"]["validate_contracts"] and skill in target.get("parameters", {}):
-                Draft202012Validator({"type": "object", "properties": target["parameters"][skill],
-                    "required": list(target["parameters"][skill]), "additionalProperties": False}).validate(args)
             now = simulator.now()
             context = {"now": now, "mode": "simulation",
                        "search_available": state["simulation_data"].get("search_available", True)}
@@ -786,7 +856,47 @@ def _scope_ids(scope):
     return list(dict.fromkeys(scope))
 
 
-def planner_response_schema(agents):
+def action_schema(state, agent, card):
+    """Bind each call to one actual entity, method and parameter schema."""
+    reference = {"type": "object", "required": ["from_task", "field"], "additionalProperties": False,
+                 "properties": {"from_task": {"type": "string"}, "field": {"type": "string"},
+                                "add": {"type": "number"}, "format": {"enum": ["text"]}}}
+    choices = []
+    for section, target in (("devices", "device_id"), ("services", "service_id")):
+        for entity_id, entity in card[section].items():
+            for skill in entity["skills"]:
+                definition = state["agent_registry"][agent]["operations"][skill]
+                parameters = deepcopy(operation_parameters(state, agent, skill, {target: entity_id}))
+                required = [name for name, schema in parameters.items() if "default" not in schema]
+                for name, schema in parameters.items():
+                    if name != target:
+                        parameters[name] = {"anyOf": [schema, reference]}
+                        paths = [c["state"].format_map({target: entity_id}) for c in definition["postconditions"]
+                                 if c.get("equals_arg") == name and "state" in c]
+                        if paths and lean_schema(schema)[0].get("type") in ("integer", "number"):
+                            parameters[name]["anyOf"].append({"type": "object", "required": ["from_state", "add"],
+                                "additionalProperties": False, "properties": {
+                                    "from_state": {"enum": paths}, "add": {"type": "number"}}})
+                parameters[target] = {"type": "string", "const": entity_id}
+                choices.append({"type": "object", "required": ["skill_id", "arguments"], "additionalProperties": False,
+                    "properties": {"task_id": {"type": "string"}, "skill_id": {"const": skill},
+                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                        "arguments": {"type": "object", "properties": parameters,
+                                      "required": list(dict.fromkeys([target, *required])), "additionalProperties": False}}})
+    return {"anyOf": choices} if choices else False
+
+
+def domain_response_schema(state, agent, card):
+    return {"type": "object", "required": ["actions"], "additionalProperties": False, "properties": {
+        "actions": {"type": "array", "items": action_schema(state, agent, card)},
+        "collaboration_request": {"type": "object", "additionalProperties": False, "properties": {
+            "target": {"enum": list(get_available_agents(state))}, "request": {"type": "string"}}},
+        "replan_required": {"type": "boolean"}, "reason": {"type": "string"},
+        "rejected_requests": {"type": "array", "items": {"type": "object", "required": ["request", "reason"],
+            "additionalProperties": False, "properties": {"request": {"type": "string"}, "reason": {"type": "string"}}}}}}
+
+
+def planner_response_schema(agents, state=None, repair=None):
     """Keep task descriptions separate from executable tool calls."""
     strings = {"type": "array", "items": {"type": "string"}}
     operation = {"type": "object", "required": ["skill_id", "arguments"], "properties": {
@@ -795,36 +905,54 @@ def planner_response_schema(agents):
     task = {"type": "object", "required": ["agent_id", "action"], "properties": {
         "task_id": {"type": "string"}, "agent_id": {"type": "string", "enum": list(agents)},
         "action": {"type": "string", "minLength": 1}, "depends_on": strings,
+        "constraints": strings,
         "scope": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "requirements": {"type": "array", "items": operation},
         "actions": {"type": "array", "items": operation}}}
+    tasks = []
+    for agent in agents:
+        variant = deepcopy(task)
+        variant["properties"]["agent_id"] = {"const": agent}
+        if state and (not state["simulation_data"].get("domain_planning_only") or not state["settings"]["domain_agents_enabled"]):
+            calls = action_schema(state, agent, get_available_agents(state)[agent])
+            for field in ("requirements", "actions"):
+                variant["properties"][field]["items"] = calls
+        tasks.append(variant)
+    if repair:
+        for variant in tasks:
+            variant["required"].append("task_id")
+            variant["properties"]["task_id"] = {"enum": repair["task_ids"]}
     return {"type": "object", "required": ["task_queue"], "properties": {
-        "task_queue": {"type": "array", "items": task}, "response": {"type": "string"},
+        "task_queue": {"type": "array", "items": {"anyOf": tasks},
+                       **({"minItems": len(repair["task_ids"]), "maxItems": len(repair["task_ids"])} if repair else {})},
+        "response": {"type": "string"},
         "rejected_requests": {"type": "array", "items": {"type": "object",
             "required": ["request", "reason"], "properties": {
                 "request": {"type": "string"}, "reason": {"type": "string"}}}}}}
 
 
-def _ask(instructions, *, role="planner", expected=None, request_id=None, **context):
+def _ask(instructions, *, role="planner", expected=None, request_id=None, response_schema=None, **context):
     simulator = SIMULATORS.get(request_id)
     if simulator is not None:
         context.update(now=simulator.now(), reference_time=simulator.reference_time, user_location=simulator.user_location)
-    schema = planner_response_schema(context["available_agents"]) if role == "planner" and context.get("available_agents") else None
+    schema = response_schema
+    if schema is None and role == "planner" and context.get("available_agents"):
+        schema = planner_response_schema(context["available_agents"], context.pop("schema_state", None), context.get("repair"))
     if schema and context.get("domain_planning_only"):
-        task_schema = schema["properties"]["task_queue"]["items"]
-        task_schema["properties"]["scope"]["minItems"] = 1
-        task_schema["required"].append("scope")
-        for field in ("actions", "requirements"):
-            task_schema["properties"][field] = {"type": "array", "maxItems": 0}
+        for task_schema in schema["properties"]["task_queue"]["items"]["anyOf"]:
+            task_schema["properties"]["scope"]["minItems"] = 1
+            task_schema["required"].append("scope")
+            for field in ("actions", "requirements"):
+                task_schema["properties"][field] = {"type": "array", "maxItems": 0}
     if schema and context.get("planner_only"):
-        task_schema = schema["properties"]["task_queue"]["items"]
-        task_schema["required"].append("actions")
-        task_schema["properties"]["actions"]["minItems"] = 1
+        for task_schema in schema["properties"]["task_queue"]["items"]["anyOf"]:
+            task_schema["required"].append("actions")
+            task_schema["properties"]["actions"]["minItems"] = 1
     messages = [SystemMessage(content=instructions + "\nReturn one JSON object with the requested fields and actual values. "
                              "Do not return a schema, catalogue, example, or Markdown."),
                 HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":")))]
     # Keep the actual request visible after the catalogue, too. This does not add new input.
-    request = context.get("original_input", context.get("user_message"))
+    request = context.get("task", {}).get("action") or context.get("original_input", context.get("user_message"))
     if request:
         messages[-1].content += "\nUser request: " + request
     call = {"call_id": uuid4().hex, "role": role, "model": model_for_role(role), "context_time": context.get("now"),
@@ -838,6 +966,9 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
         call["configured_num_ctx"] = getattr(llm, "num_ctx", None)  # None means the server decides.
         if schema and call["model"].startswith("ollama:"):
             llm = llm.bind(format=schema)
+            call.update(json_mode="schema", response_schema=schema)
+        elif schema and call["model"].startswith("openai:"):
+            llm = llm.bind(response_format={"type": "json_schema", "json_schema": {"name": "mas_response", "schema": schema}})
             call.update(json_mode="schema", response_schema=schema)
         response = llm.invoke(messages)
         metadata, usage = response.response_metadata or {}, response.usage_metadata or {}
@@ -861,9 +992,11 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
             Draft202012Validator(schema).validate(result)
         return result
     except Exception as exc:
+        if isinstance(exc, ValidationError):
+            exc = ValueError(f"Invalid model response at {list(exc.absolute_path)}: {exc.message}")
         call["error"] = f"{type(exc).__name__}: {exc}"
         call["technical_error"] = "raw_response" not in call
-        raise
+        raise exc
     finally:
         call["latency_s"] = time.perf_counter() - started
         simulator = SIMULATORS.get(request_id)
@@ -922,7 +1055,7 @@ def task_planner(state):
         for card in cards.values():
             card["operations"] = {skill: {k: d[k] for k in ("preconditions",) if k in d}
                                   for skill, d in card.get("operations", {}).items()}
-    context = dict(original_input=state["original_user_input"], available_agents=cards,
+    context = dict(original_input=state["original_user_input"], available_agents=cards, schema_state=state,
                    search_fixture_queries=list(state["simulation_data"].get("search_results", {})),
                    rooms=state["home_config"]["rooms"], home_state=remaining_state, planner_only=planner_only)
     if state["simulation_data"].get("domain_planning_only") and not planner_only:
@@ -937,10 +1070,14 @@ def task_planner(state):
                                   if key.startswith("room.")}
     if state["settings"]["intent_analysis_enabled"]:
         context["intent_analysis"] = {"infos": state["infos"], "key_modifiers": state["key_modifiers"]}
+    if state["simulation_data"].get("planning_error"):
+        context["previous_error"] = state["simulation_data"]["planning_error"]
     if repair:
-        context.update(repair=repair, tasks=state["tasks"], confirmed_results=state["task_history"])
+        context.update(repair=repair, tasks={key: state["tasks"][key] for key in repair["task_ids"]},
+                       confirmed_results=state["task_history"])
     try:
-        result = _ask('Plan the ENTIRE original_input as JSON. '
+        result = _ask(('Repair ONLY the listed tasks as JSON; original_input is background. ' if repair else
+                       'Plan the ENTIRE original_input as JSON. ') +
                       'Create one task per distinct user goal; preserve order, locations, quantities and conditions. '
                       'Use only agent IDs and device/service IDs from available_agents. '
                       'Methods are in entity.methods or the agent card methods_by_type[entity.type]. '
@@ -974,8 +1111,8 @@ def task_planner(state):
                          'route uncertain capability/state questions to a domain first. ') +
                       'Planning/execution failures are not invalid user requests. '
                       'Intent analysis is optional supporting context; original_input is authoritative. '
-                      'For repair replace all repair.task_ids, preserving their IDs, goals and retained dependencies; '
-                      'only add information tasks with kind="information" and parent=<affected ID>. '
+                      'For repair output ONLY repair.task_ids, preserving their IDs, goals and dependencies. '
+                      'Never repeat the original whole plan or introduce new tasks. '
                       + graph_instruction + ' Output: {"task_queue":[],"rejected_requests":[],"response":""}. '
                       'A task has task_id, agent_id, action, requirements and '
                       + ('actions. ' if planner_only else 'optional actions. ') +
@@ -1002,7 +1139,9 @@ def task_planner(state):
                       'Use the controlling catalogue group with the room as scope for implicit goals. '
                       'For future device goals preserve every time relation in action/constraints; use start_time when supported. '
                       'For appliance-relative timing obtain anchor readings first and declare dependencies; include anchor/target IDs in scope. '
-                      'Interpret relative-to-now times from the fixed reference_time, not a later now.',
+                      'Interpret relative-to-now times from the fixed reference_time, not a later now. '
+                      'For numeric state changes use {"from_state":"device.<ID>.<field>","add":<signed delta>} '
+                      'instead of calculating a final value. HomeBench percentages change percentage points.',
                       role="planner", expected={"task_queue": list}, request_id=state["request_id"], **context)
         rejected = read_rejections(result)
         queue = []
@@ -1019,14 +1158,11 @@ def task_planner(state):
                               depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
                               scope=raw.get("scope", []), constraints=raw.get("constraints", [])))
             if raw.get("actions"):
-                queue[-1]["actions"] = raw["actions"]
+                queue[-1]["actions"] = [{**a, "arguments": relative_arguments(state, queue[-1], a)} for a in raw["actions"]]
             queue[-1]["goal"] = (deepcopy(state["tasks"][task_id]["goal"])
                                   if repair and task_id in state["tasks"] else freeze_goal({**raw, **queue[-1]}, state))
             if repair and task_id not in repair["task_ids"]:
-                if raw.get("kind") != "information" or raw.get("parent") not in repair["task_ids"]:
-                    raise ValueError(f"PlanError: unexpected repair task {task_id!r}; expected IDs {repair['task_ids']}. "
-                                     "Extra tasks require kind=information and parent=<affected task ID>.")
-                queue[-1]["parent"] = raw["parent"]
+                raise ValueError(f"PlanError: repair must use the existing task IDs {repair['task_ids']}.")
         if graph_mode:
             for t in queue:
                 refs = [v["from_task"] for a in t.get("actions", []) for v in a.get("arguments", {}).values()
@@ -1046,8 +1182,8 @@ def task_planner(state):
                 for t in queue:
                     if t["task_id"] not in state["tasks"]:
                         continue
-                    # A repair may change routing/dependencies, never the user's assigned goal or constraints.
-                    for key in ("action", "scope", "constraints", "repairs"):
+                    # Repair may change routing, but keeps the assigned goal and dependencies.
+                    for key in ("action", "scope", "constraints", "repairs", "depends_on"):
                         if key in state["tasks"][t["task_id"]]:
                             t[key] = deepcopy(state["tasks"][t["task_id"]][key])
                 settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
@@ -1063,6 +1199,9 @@ def task_planner(state):
                        goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
     except (ValueError, KeyError, TypeError, ValidationError) as exc:
         if not repair:
+            if state["settings"]["planner_replan"] and state["settings"]["replans"] < state["settings"]["max_replans"]:
+                return Command(update={"settings": {**state["settings"], "replans": state["settings"]["replans"] + 1},
+                    "simulation_data": {**state["simulation_data"], "planning_error": str(exc)}}, goto="task_planner")
             return Command(update={"final_response": json.dumps(
                 {"status": "failed", "error": f"PlannerError: {exc}",
                  "failure": {"kind": "plan"}}, ensure_ascii=False)}, goto="finish")
@@ -1102,13 +1241,17 @@ def _agent(state, agent):
                          'replan_required=true and reason. Stay within the assigned goal and its constraints. '
                          if graph_mode else '')
     task.setdefault("goal", freeze_goal(task, state))
-    instructions = ('Preserve task.goal and its required targets/values; complete all outcomes after prerequisites. '
+    instructions = ('Fulfil ONLY task.action and task.goal; original_input is background, not an additional assignment. '
+                    'Preserve task.goal and its required targets/values; complete all outcomes after prerequisites. '
                     'Use {"from_task":"t1","field":"results.0.content"} for confirmed predecessor data; '
                     'use "format":"text" for records/lists. Retrieve missing data through collaboration. '
                     'Return ordered calls with concrete IDs using operation parameters/conditions. '
                     'Add prerequisites only when required by the listed operation preconditions; never assume turn_on is required. '
+                    'For plain on/off requests choose the native power method; do not add brightness or mode changes. '
                     'Use only listed operations; never turn an error message into a skill_id. Do not invent genre matches. '
                     'Use current state, cards and previous confirmed results. Include prerequisite actions yourself. '
+                    'For numeric changes use {"from_state":"device.<ID>.<field>","add":<signed delta>}; '
+                    'Python computes the final value. HomeBench percentages change percentage points. '
                     'Never fabricate inventory, time, appointments or search facts. For ALL devices emit separate calls. '
                     'For information questions use only read methods; obtain the requested values without changing devices. '
                     'For implicit room goals, use native environment control rules from agent_card.context when provided, '
@@ -1133,25 +1276,32 @@ def _agent(state, agent):
                     '"collaboration_request": {"target": "fridge", "request": "specific question"} or {}, '
                     '"rejected_requests": []}.')
     prompt_state = state
-    if state["simulation_data"].get("domain_planning_only") and task.get("scope"):
+    scope = task.get("scope") or [r["arguments"][key] for r in task["goal"]["requirements"]
+                                 for key in ("device_id", "service_id") if key in r["arguments"]]
+    if scope:
         card = deepcopy(available[agent])
         card["devices"] = {key: device for key, device in card["devices"].items()
-                           if key in task["scope"] or device["room_id"] in task["scope"]}
+                           if key in scope or device["room_id"] in scope}
         device_types = {device["type"] for device in card["devices"].values()}
         card["services"] = {key: service for key, service in card["services"].items()
-                            if key in task["scope"] or service["room_id"] in task["scope"]
-                            or service.get("serves_type") in device_types}
+                            if key in scope or service["room_id"] in scope
+                            or service.get("serves_type") in device_types
+                            or service["room_id"] is None and not service.get("serves_type")}
+        skills = {skill for section in ("devices", "services") for entity in card[section].values() for skill in entity["skills"]}
+        card["operations"] = {skill: definition for skill, definition in card.get("operations", {}).items() if skill in skills}
         available[agent] = card
-        prefixes = tuple(f"device.{key}." for key in card["devices"])
+        prefixes = tuple(f"{scope}.{key}." for section, scope in (("devices", "device"), ("services", "service")) for key in card[section])
         prompt_state = {**state, "home_state": {key: value for key, value in state["home_state"].items()
                                               if key.startswith(prefixes) or key.startswith("room.")}}
     cards, remaining_state = prompt_agents(prompt_state, {agent: available[agent]})
     instructions += (' Methods are in entity.methods or agent_card.methods_by_type[entity.type]. '
                      'Method maps pair exact skill names with argument definitions. '
                      'Use the method KEY as skill_id and its argument names/limits; '
-                     'add device_id/service_id with the entity ID. State values are nested in each entity.state.')
+                     'Copy entity.target into arguments: services require service_id, devices require device_id. '
+                     'State values are nested in each entity.state.')
     try:
         result = _ask(instructions, role=agent, expected={"actions": list}, request_id=state["request_id"],
+                      response_schema=domain_response_schema(state, agent, available[agent]),
                       original_input=state["original_user_input"],
                       search_fixture_queries=list(state["simulation_data"].get("search_results", {})) if agent == "search_engine" else [],
                       agent=agent, task=task, agent_card=cards[agent], available_agents=list(available),
@@ -1352,6 +1502,13 @@ def collect_plans(state):
                 task["status"] = "waiting"
                 continue
             actions = response["actions"]
+            Draft202012Validator({"type": "array", "items": action_schema(state, task["agent_id"],
+                get_available_agents(state)[task["agent_id"]])}).validate(actions)
+            actions = [{**a, "arguments": relative_arguments(state, task, a)} for a in actions]
+            for action in actions:
+                for name, schema in operation_parameters(state, task["agent_id"], action["skill_id"], action["arguments"]).items():
+                    if "default" in schema:
+                        action["arguments"].setdefault(name, deepcopy(schema["default"]))
             rejected.extend(response.get("rejected_requests", []))
             if not actions and response.get("rejected_requests"):
                 task.update(status="rejected", terminal=True)
@@ -1364,8 +1521,24 @@ def collect_plans(state):
                 continue
             if not actions or any(not isinstance(a, dict) for a in actions):
                 raise ValueError("Agent muss konkrete Aktionen liefern.")
+            retained = [a for a in graph.values() if a["task"]["task_id"] == task_id and a["status"] == "success"]
+            retained_ids = {}
+            if task.get("generation"):
+                missing = []
+                for index, action in enumerate(actions):
+                    old = next((a for a in retained if a["skill_id"] == action["skill_id"] and
+                                action["arguments"] in (a["arguments"], argument_template(a))), None)
+                    if old:
+                        retained_ids[action.get("task_id", f"a{index + 1}")] = old["task_id"]
+                    else:
+                        missing.append(action)
+                actions = missing
+                if not actions:
+                    check_goal(state, task, retained, complete=True)
+                    task["status"] = "success"
+                    continue
             requirements = task["goal"]["requirements"]
-            if not task.get("generation") and not any(r["arguments"] for r in requirements):
+            if not any(r["arguments"] for r in requirements):
                 first_goal = freeze_goal({k:v for k,v in {**task, "actions": actions}.items() if k != "goal"}, state)
                 task["goal"]["requirements"] = first_goal["requirements"] + [
                     r for r in requirements if r["skill_id"] not in {a["skill_id"] for a in first_goal["requirements"]}]
@@ -1384,11 +1557,16 @@ def collect_plans(state):
                 deps = action.get("depends_on", local_ids[index - 1:index] if index else [])
                 if not isinstance(deps, list):
                     raise ValueError("depends_on muss eine Liste sein.")
-                deps = [d if "/" in d else prefix + d for d in deps]
+                deps = [retained_ids.get(d, d if "/" in d else prefix + d) for d in deps]
                 action_id = prefix + local_ids[index]
                 additions[action_id] = {**action, "task_id": action_id, "task": deepcopy(task),
                                         "agent_id": task["agent_id"], "depends_on": list(dict.fromkeys(deps + predecessor_actions)),
                                         "status": "pending"}
+                previous = next((r for r in reversed(state["task_results"]) if r["task_id"].split("/")[0] == task_id
+                                 and r["skill_id"] == action["skill_id"] and r["arguments"].get("device_id") == action["arguments"].get("device_id")
+                                 and r["arguments"].get("service_id") == action["arguments"].get("service_id")), {})
+                additions[action_id]["argument_sources"] = {name: ref for name, ref in previous.get("argument_sources", {}).items()
+                    if "from_state" in ref and action["arguments"].get(name) == {"from_state": ref["from_state"], "add": ref["add"]}}
                 reads, writes, target = action_footprint(state, additions[action_id])
                 if not isinstance(target[1], str):
                     raise ValueError("Konkrete device_id/service_id muss ein String sein.")
@@ -1399,8 +1577,8 @@ def collect_plans(state):
             tuple(TopologicalSorter({i: a["depends_on"] for i, a in candidate.items()}).static_order())
             graph = candidate
             task["status"] = "planned"
-        except (KeyError, ValueError, TypeError, CycleError) as exc:
-            task.update(status="failed", error=f"PlanError: {exc}", failure={"kind": "plan"})
+        except (KeyError, ValueError, TypeError, CycleError, ValidationError) as exc:
+            task.update(status="failed", error=f"PlanError: {exc.message if isinstance(exc, ValidationError) else exc}", failure={"kind": "plan"})
     return Command(update={"tasks": tasks, "action_graph": graph, "rejected_requests": rejected,
                            "task_history": history}, goto="plan_agents")
 
@@ -1492,6 +1670,18 @@ def lean_value(value, kind):
     raise ValueError(f"Lean reference value {value!r} does not match {kind!r}.")
 
 
+def lean_schema(schema):
+    """The parameter schema Lean checks, and whether null (an omitted optional value) is allowed."""
+    types = schema.get("type")
+    if isinstance(types, list) and "null" in types:
+        rest = [t for t in types if t != "null"]
+        return ({**schema, "type": rest[0]} if len(rest) == 1 else {}), True
+    options = [s for s in schema.get("anyOf", []) if s.get("type") != "null"]
+    if "anyOf" in schema and len(options) == len(schema["anyOf"]) - 1:
+        return (options[0] if len(options) == 1 else {}), True
+    return schema, False
+
+
 def check_allocation(state, batch, snapshot=None):
     """Vaibhav's unchanged checker over a finite registry projection; rich contracts stay in Python.
     Arguments are sent as typed values (numbers, booleans, enum strings) together with their
@@ -1506,42 +1696,101 @@ def check_allocation(state, batch, snapshot=None):
     registry = state["agent_registry"]
     actions = {**state["action_graph"], **{a["task_id"]: a for a in batch}}
     agents = sorted(registry)
-    op_keys = [(agent, skill) for agent in agents for skill in sorted(registry[agent]["operations"])]
-    op_ids = {key: i for i, key in enumerate(op_keys)}
     entities = {f"{scope}.{i}": e for section, scope in (("devices", "device"), ("services", "service"))
                 for i, e in state["home_config"][section].items()}
-    dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}))}
-    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | {
+    target_of = lambda args: "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
+    home_device = "__home__"
+
+    def footprint(a):
+        d = registry[a["agent_id"]]["operations"][a["skill_id"]]
+        reads = d["reads"] + [c[k] for c in d["preconditions"] for k in ("state", "equals_state") if k in c]
+        return {p.format_map(a["arguments"]) for p in reads}, {p.format_map(a["arguments"]) for p in d["writes"]}
+
+    # Lean's operations write only their own target. A command that writes another entity's state
+    # (Home Assistant's name/area tools) is checked as a command on one pseudo-device for the whole
+    # home, with every key it touches as explicit state of that device; commands that only read such
+    # keys read them as shared keys. These keys alone decide the conflicts (no exclusive target), so
+    # whole-home commands with disjoint keys stay parallel. Lean lists at most 64 keys per operation,
+    # so the keys are grouped into blocks: keys that no footprint of the batch or of a running command
+    # tells apart share one block. Without such commands (DEXA, HomeBench, SimuHome) nothing changes.
+    footprints = {aid: footprint(a) for aid, a in actions.items()}
+    home_actions, home_keys = set(), set()
+    while found := {aid for aid, (_, w) in footprints.items() if aid not in home_actions and any(
+            k.rsplit('.', 1)[0] != target_of(actions[aid]["arguments"]) or k in home_keys for k in w)}:
+        home_actions |= found
+        home_keys |= {k for aid in found for k in footprints[aid][0] | footprints[aid][1]}
+    relevant = [aid for aid in (*(a["task_id"] for a in batch), *reservations) if aid in footprints]
+    groups = {}
+    for k in sorted(home_keys):
+        groups.setdefault(frozenset(aid for aid in relevant if k in footprints[aid][0] | footprints[aid][1]), []).append(k)
+    block = {k: "|".join(ks) for ks in groups.values() for k in ks}
+
+    def op_key(aid, a):
+        # One Lean operation per device whose own schema has limits/options (external benchmarks),
+        # and per set of omitted optional arguments, since Lean's arguments are positional.
+        target = target_of(a["arguments"])
+        own = entities.get(target, {}).get("parameters", {}).get(a["skill_id"])
+        schema = own if own is not None else registry[a["agent_id"]]["operations"][a["skill_id"]]["parameters"]
+        omitted = tuple(sorted(n for n, p in schema.items() if lean_schema(p)[1] and a["arguments"].get(n) is None))
+        reads, writes = footprints[aid]
+        at_home = aid in home_actions
+        keys_ = (tuple(sorted(reads)), tuple(sorted(writes))) if at_home else tuple(sorted(reads & home_keys))
+        return a["agent_id"], a["skill_id"], target if own is not None else None, omitted, at_home, keys_
+
+    keys = {aid: op_key(aid, a) for aid, a in actions.items()}
+    op_keys = sorted(set(keys.values()), key=repr)
+    op_ids = {key: i for i, key in enumerate(op_keys)}
+    dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}
+                                                       | ({home_device} if home_actions else set())))}
+    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | set(block.values()) | {
         k.rsplit('.', 1)[-1] for card in registry.values() for d in card["operations"].values()
         for k in d["reads"] + d["writes"] + [c["state"] for c in d["preconditions"] if "state" in c]})
     attr_ids = {name: i for i, name in enumerate(attrs)}
     task_ids = {name: i for i, name in enumerate(actions)}
     key = lambda path: [dev_ids[path.rsplit('.', 1)[0]], attr_ids[path.rsplit('.', 1)[-1]]]
+    # State and evidence keep the real keys; footprints name whole-home keys by their block.
+    keyset = lambda paths: [list(k) for k in sorted({(dev_ids[home_device], attr_ids[block[p]]) if p in home_keys
+                                                     else tuple(key(p)) for p in paths})]
     # Finite string equality for enum preconditions; free text/list/object values remain opaque.
     strings = sorted({c["equals"] for card in registry.values() for d in card["operations"].values()
                       for c in d["preconditions"] if isinstance(c.get("equals"), str)})
     scalar = lambda v: (int(v) if type(v) in (bool, int) and abs(v) <= 10**9 else
                         strings.index(v) + 2 if isinstance(v, str) and v in strings else 0)
-    ops, fields = [], {}
-    for agent, skill in op_keys:
+    ops, fields, int_options = [], {}, {}
+    # Anything but a whole number for whole-number options is sent as null, which Lean rejects.
+    wire = lambda key_, i, v: (str(v) if type(v) is int else None) if i in int_options.get(key_, ()) else v
+    for op_key_ in op_keys:
+        agent, skill, target, omitted, at_home, footprint_keys = op_key_
         d = registry[agent]["operations"][skill]
+        if at_home and d["preconditions"]:
+            raise ValueError(f"Lean: preconditions of the whole-home command {skill} cannot be checked.")
+        parameters = entities[target]["parameters"][skill] if target else d["parameters"]
         projected, bounds, types = [], [], []
-        for name, schema in d["parameters"].items():
+        for name, schema in parameters.items():
+            schema, optional = lean_schema(schema)
+            if optional and name in omitted:
+                continue
             if "enum" in schema and all(isinstance(v, str) for v in schema["enum"]):
                 projected.append(name)
                 bounds.append([0, len(schema["enum"]) - 1])
                 types.append({"enum": schema["enum"]})
+            elif "enum" in schema and all(type(v) is int for v in schema["enum"]):
+                # Lean's options are text: whole-number options travel as their decimal text.
+                projected.append(name)
+                bounds.append([0, len(schema["enum"]) - 1])
+                types.append({"enum": [str(v) for v in schema["enum"]]})
+                int_options.setdefault(op_key_, set()).add(len(projected) - 1)
             elif schema.get("type") == "boolean":
                 projected.append(name)
                 bounds.append([0, 1])
                 types.append("bool")
             elif schema.get("type") in ("integer", "number"):
-                values = [schema[k] for k in ("minimum", "maximum") if k in schema] + [a["arguments"][name] for a in actions.values()
-                    if (a["agent_id"], a["skill_id"]) == (agent, skill) and type(a["arguments"].get(name)) in (int, float)
+                values = [schema[k] for k in ("minimum", "maximum") if k in schema] + [a["arguments"][name] for aid, a in actions.items()
+                    if keys[aid] == op_key_ and type(a["arguments"].get(name)) in (int, float)
                     and math.isfinite(a["arguments"][name])]
                 for a in batch:
                     ref = a.get("argument_sources", {}).get(name)
-                    if (a["agent_id"], a["skill_id"]) == (agent, skill) and ref and ref.get("format") != "text":
+                    if keys[a["task_id"]] == op_key_ and ref and "from_task" in ref and ref.get("format") != "text":
                         values.extend([output_value(actions[ref["action_id"]]["output"], ref["field"]), ref.get("add", 0)])
                 values = [v for v in values if type(v) in (int, float) and math.isfinite(v)]
                 scale = math.lcm(*(Fraction(str(v)).denominator for v in values))
@@ -1551,7 +1800,7 @@ def check_allocation(state, batch, snapshot=None):
                     bounds.append([math.ceil(Fraction(str(schema["minimum"])) * scale) if "minimum" in schema else -10**9,
                                    math.floor(Fraction(str(schema["maximum"])) * scale) if "maximum" in schema else 10**9])
                     types.append({"number": scale})
-        fields[(agent, skill)] = projected
+        fields[op_key_] = projected
         pre, reads = [], set(d["reads"])
         for c in d["preconditions"]:
             if "state" not in c:
@@ -1561,15 +1810,25 @@ def check_allocation(state, batch, snapshot=None):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "ge", -10**9])
             elif "equals" in c and type(c["equals"]) in (bool, int, str):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "eq", scalar(c["equals"])])
-        ops.append(dict(id=op_ids[(agent, skill)], cap=agents.index(agent), bounds=bounds, types=types,
-                        reads=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads}),
-                        writes=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]}),
-                        excl=[attr_ids["__target__"]], shared_reads=[], pre=pre,
+        if at_home:  # explicit whole-home keys, by block; they alone decide the conflicts
+            op_reads, op_writes = (sorted({attr_ids[block[k]] for k in ks}) for ks in footprint_keys)
+            shared, excl = [], []
+        else:
+            op_reads = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads})
+            op_writes = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]})
+            shared, excl = keyset(footprint_keys), [attr_ids["__target__"]]
+        ops.append(dict(id=op_ids[op_key_], cap=agents.index(agent), bounds=bounds, types=types,
+                        reads=op_reads, writes=op_writes, excl=excl, shared_reads=shared, pre=pre,
                         coupled=False, load_base=0, load_per_unit=0))
     devices = [dict(id=dev_ids[name], caps=[agents.index(e["agent_id"])],
-                    ops=[op_ids[(e["agent_id"], skill)] for skill in e["skills"]
-                         if registry[e["agent_id"]]["enabled"] and skill in registry[e["agent_id"]]["capabilities"]])
+                    ops=[i for (agent, skill, target, _, at_home, _), i in op_ids.items() if agent == e["agent_id"]
+                         and not at_home and target in (None, name) and skill in e["skills"]
+                         and registry[agent]["enabled"] and skill in registry[agent]["capabilities"]])
                for name, e in entities.items()]
+    if home_actions:
+        home_ops = {i: k[0] for k, i in op_ids.items() if k[4]}
+        devices.append(dict(id=dev_ids[home_device], caps=sorted({agents.index(a) for a in home_ops.values()}),
+                            ops=sorted(home_ops)))
     ranks, tasks, evidence, commands = {}, [], [], []
     views, references = {}, []
     selected_ids = {a["task_id"] for a in batch}
@@ -1577,14 +1836,14 @@ def check_allocation(state, batch, snapshot=None):
         a = actions[aid]
         args = a["arguments"]
         agent, skill = a["agent_id"], a["skill_id"]
-        target = "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
+        target = target_of(args)
         # Typed values as they are; the checker decodes them with the declared types.
-        vals = [args.get(name) for name in fields[(agent, skill)]]
+        vals = [wire(keys[aid], i, args.get(name)) for i, name in enumerate(fields[keys[aid]])]
         ranks[aid] = 1 + max((ranks[d] for d in a["depends_on"]), default=-1)
         verified = a["status"] == "success" and a.get("verified", False)
         tasks.append(dict(id=task_ids[aid], status="pending" if aid in selected_ids else
                           "verified" if verified else "failed" if a["status"] in {"failed", "blocked"} else "pending",
-                          op=op_ids[(agent, skill)], device=dev_ids[target],
+                          op=op_ids[keys[aid]], device=dev_ids[home_device if aid in home_actions else target],
                           # Only the batch's tasks need their arguments (for the contract check).
                           args=[{"lit": v} for v in vals] if aid in selected_ids else [],
                           deps=[task_ids[d] for d in a["depends_on"]], rank=ranks[aid], pre=[], deadline=10**12))
@@ -1592,23 +1851,24 @@ def check_allocation(state, batch, snapshot=None):
             evidence.append(dict(task=task_ids[aid], verified=True, valid_until=int(a["valid_until"]), output=None,
                                  basis=[[*key(k), v] for k, v in a["evidence_versions"].items()]))
         if aid in selected_ids:
-            commands.append(dict(task=task_ids[aid], device=dev_ids[target], op=op_ids[(agent, skill)], args=vals))
-            for index, name in enumerate(fields[(agent, skill)]):
+            commands.append(dict(task=task_ids[aid], device=dev_ids[home_device if aid in home_actions else target],
+                                 op=op_ids[keys[aid]], args=vals))
+            for index, name in enumerate(fields[keys[aid]]):
                 ref = a.get("argument_sources", {}).get(name)
-                if not ref or ref.get("format") == "text":
+                if not ref or "from_task" not in ref or ref.get("format") == "text":
                     continue
-                kind = ops[op_ids[(agent, skill)]]["types"][index]
+                kind = ops[op_ids[keys[aid]]]["types"][index]
                 provider = ref["action_id"]
-                value = lean_value(output_value(actions[provider]["output"], ref["field"]), kind)
+                value = lean_value(wire(keys[aid], index, output_value(actions[provider]["output"], ref["field"])), kind)
                 offset = lean_value(ref.get("add", 0), kind) if isinstance(kind, dict) and "number" in kind else 0
                 view = (ref["field"], kind, value)
                 options = views.setdefault(task_ids[provider], [])
                 if view not in options:
                     options.append(view)
                 references.append((tasks[-1], index, task_ids[provider], options.index(view), offset, vals[index], ref))
-    active = [dict(reads=[key(k) for k in r], writes=[key(k) for k in w],
-                   excl=[[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
-              for r, w, t in reservations.values()]
+    active = [dict(reads=keyset(r), writes=keyset(w), excl=[] if aid in home_actions else
+                   [[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
+              for aid, (r, w, t) in reservations.items()]
     payload = dict(schema="dexa-alloc-request/1", request_id=uuid4().hex, auth_ttl=30,
         catalogue=dict(revision=1, ops=ops, devices=devices, load_attr=attr_ids["__target__"], meter_key=[0, 0], load_budget=0),
         graph=dict(revision=1, tasks=tasks),
@@ -1630,12 +1890,16 @@ def check_allocation(state, batch, snapshot=None):
         result = subprocess.run([state["settings"]["lean_executable"], "--oneshot"], input=json.dumps(payload, allow_nan=False) + "\n",
                                 capture_output=True, text=True, timeout=15, check=True)
         response = json.loads(result.stdout)
-        # The checker echoes commands with decoded integer arguments.
+        if response.get("request_id") != payload["request_id"]:
+            raise ValueError("Lean allocation checker answered a different request.")
+        # Check the verdict first, so that a rejection reports Lean's own reason.
+        if response.get("verdict") != "accept":
+            raise ValueError(f"Lean allocation checker rejected the batch: {response.get('diagnostics', response.get('error'))}")
+        # An accepted batch is echoed with its decoded integer arguments.
         expected = [{**c, "args": [lean_value(v, kind) for v, kind in zip(c["args"], ops[c["op"]]["types"])]}
                     for c in commands]
-        if (response.get("request_id") != payload["request_id"] or response.get("commands") != expected
-                or response.get("verdict") != "accept"):
-            raise ValueError(f"Lean allocation checker rejected the batch: {response.get('diagnostics', response.get('error'))}")
+        if response.get("commands") != expected:
+            raise ValueError("Lean allocation checker accepted different commands than were sent.")
         for action in batch:
             action["dispatch_until"] = min(action["dispatch_until"], time.monotonic() + max(0, response["expires_at"] - time.time()))
     for *_, ref in references:
@@ -1924,14 +2188,16 @@ def run_request(text, **setup):
         selected_graph.checkpointer.delete_thread(config["configurable"]["thread_id"])
 
 
-def interactive(**setup):
+def interactive(home_assistant=None, **setup):
     while True:
         text = input("\nYour command (quit to exit): ").strip()
         if text.lower() in {"q", "quit", "exit"}:
             break
         if text:
             started = time.perf_counter()
-            for event in run_request(text, **setup):
+            # Read the real devices' power state again for every request.
+            extra = home_assistant_setup(home_assistant) if home_assistant else {}
+            for event in run_request(text, **setup, **extra):
                 for node, update in event.items():
                     if node != "episode_result" and update and update.get("final_response"):
                         print(update["final_response"])
@@ -1940,5 +2206,8 @@ def interactive(**setup):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smart home interactive session")
     add_settings_arguments(parser)
+    parser.add_argument("--home-assistant", action="store_true",
+                        help="switch the devices listed in HA_ENTITIES (.env) on and off through Home Assistant")
     args = parser.parse_args()
-    interactive(config_path=args.config, **settings_from_args(args))
+    interactive(config_path=args.config, home_assistant=HomeAssistant.from_env() if args.home_assistant else None,
+                **settings_from_args(args))
