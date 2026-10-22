@@ -11,3 +11,6 @@ logs/
 venv/
 
 .ipynb_checkpoints/
+
+# External benchmark checkouts and their environments
+external/

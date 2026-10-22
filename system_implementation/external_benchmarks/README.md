@@ -69,7 +69,17 @@ uv pip install --python ../SimuHome/.venv/bin/python -r external_benchmarks/requ
 
 For MAS, additionally install `requirements.txt`. Set the dataset path and Python
 executable under `benchmarks.simuhome`. `SIMULATOR_API_BASE_URL` can override the
-configured endpoint. Run one experiment at a time per simulator process.
+configured endpoint (default `http://127.0.0.1:8000/api`). Run one experiment at a time
+per simulator process.
+
+After installing the participant dependencies, use `uv run --no-sync` in the SimuHome
+checkout: a plain `uv run`/`uv sync` restores SimuHome's lockfile and removes or downgrades
+them. On Windows the Python is `.venv\Scripts\python.exe`, and `simuhome server-stop` does not
+stop the server (it calls `lsof`/`kill`); stop it from PowerShell instead:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000 -State Listen | % { Stop-Process -Id $_.OwningProcess -Force }
+```
 
 QT1 and all infeasible cases use the native LLM judge panel. Configure `judge.model`,
 `judge.api_base`, temperature and seeds; the default panel has three votes.
@@ -95,6 +105,14 @@ git clone https://github.com/allenporter/home-assistant-synthetic-home.git ../ho
 ```
 
 Reuse an existing custom-component checkout. For MAS, also install `requirements.txt`.
+
+Home Assistant does not support native Windows, but its pytest runtime works with three
+shims in `windows/`. In the Home Assistant environment, `pymicro-vad` is skipped on Windows
+(the adapter never loads the voice pipeline). Then enable the shims once:
+
+```powershell
+..\external\venvs\homeassistant\Scripts\python.exe external_benchmarks\windows\install_shims.py
+```
 Set the dataset and Python paths under `benchmarks.homeassistant`. Each sentence
 gets a fresh native home. Device/room context, exposed state and native Assist
 instructions are supplied to the participant. Calls run on Home Assistant's event
@@ -152,11 +170,10 @@ python run_experiments.py --system dsia --benchmark all --output-dir logs/compar
 Replace `dsia` with `react`, `sage` or `mas`. Omit `--system` to execute the configured
 `runs` matrix. Set `experiments.system` to choose a default participant instead.
 `--limit 10` limits each benchmark; `0` means the complete selected dataset.
-Category/case-ID filters apply only to a single benchmark. DEXA is selected
-separately with `--benchmark dexa`.
+Category/case-ID filters apply only to a single benchmark.
 
-`--benchmark all` runs the three external benchmarks in separate sequential
-processes. Paths/Python executables can also be overridden using
+`--benchmark all` runs DEXA and the three external benchmarks in separate sequential
+processes; DEXA runs only for MAS. `--benchmark dexa` selects DEXA alone. Paths/Python executables can also be overridden using
 `--homebench-path`, `--simuhome-path`, `--homeassistant-path` and matching
 `--*-python` flags. `--benchmark-path` applies to a single benchmark.
 

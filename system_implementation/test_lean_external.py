@@ -10,6 +10,7 @@ Run from system_implementation/ after building the checker (cd lean && lake buil
     python -m unittest test_lean_external
 """
 
+import os
 import sys
 import time
 import unittest
@@ -20,7 +21,7 @@ import smart_home_langgraph as shl
 sys.path.insert(0, str(Path(__file__).parent / "external_benchmarks"))
 from agent_registry_homebench import build_home  # noqa: E402
 
-EXE = Path(__file__).parent / "lean/.lake/build/bin/allocation_checker"
+EXE = Path(__file__).parent / "lean/.lake/build/bin" / ("allocation_checker.exe" if os.name == "nt" else "allocation_checker")
 
 HOMEBENCH_HOME = {
     "method": [

@@ -1,0 +1,2 @@
+# Lean sources are hashed byte for byte (QED_LEAF protected digests); keep LF on every OS.
+*.lean text eol=lf

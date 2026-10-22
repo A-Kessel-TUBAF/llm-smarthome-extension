@@ -11,11 +11,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from external_benchmarks.common import SYSTEMS, write_json
-from configuration import CONFIG_PATH, activate_config, config_path as configured_path, load_config
+from configuration import CONFIG_PATH, activate_config, config_path as configured_path, load_config, system_settings
 from run_benchmark import DIMENSIONS
 
 ROOT = Path(__file__).resolve().parent
 BENCHMARKS = ("dexa", "simuhome", "homeassistant", "homebench")
+QED_LEAF_MODES = ("off", "record", "require")
+
+
+def qed_leaf_gate(settings, output, config_path=None):
+    """QED_LEAF audit of the Lean checker before a MAS run with checker = "lean" ([assurance])."""
+    mode = load_config(config_path).get("assurance", {}).get("qed_leaf", "record")
+    if mode not in QED_LEAF_MODES:
+        raise ValueError(f"assurance.qed_leaf must be one of {', '.join(QED_LEAF_MODES)}.")
+    if mode == "off" or {**system_settings("mas", config_path), **settings}["checker"] != "lean":
+        return None
+    sys.path.insert(0, str(ROOT / "assurance/qed_leaf"))
+    import run_audit
+    record = run_audit.current_record()
+    write_json(output / "qed_leaf.json", record)
+    status = record["summary"].get("status")
+    if mode == "require" and status != "passed":
+        raise RuntimeError(f"QED_LEAF audit {status}; assurance.qed_leaf = \"require\" refuses Lean-checker "
+                           f"runs. See {output / 'qed_leaf.json'}.")
+    return record
+
+
 
 
 def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, category="all",
@@ -29,6 +50,8 @@ def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, c
     output.mkdir(parents=True, exist_ok=True)
     settings = settings or {}
     try:
+        if str(system_path) == "mas" or str(system_path).endswith(".py"):
+            qed_leaf_gate(settings, output, config_path)
         from external_benchmarks.common import create_system
         if benchmark == "dexa":
             from run_benchmark import run_benchmark
@@ -91,7 +114,7 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
     if timestamped:
         output /= datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     output.mkdir(parents=True, exist_ok=resume)
-    benchmarks = BENCHMARKS if benchmark == "all" else (benchmark,)
+    benchmarks = ("dexa", *BENCHMARKS) if benchmark == "all" else (benchmark,)
     configured = load_config()["benchmarks"]
     paths = {b: os.getenv({"dexa": "DEXA_PATH", "homebench": "HOMEBENCH_PATH", "simuhome": "SIMUHOME_PATH", "homeassistant": "HOMEASSISTANT_DATASET_PATH"}[b])
              or configured_path("../benchmark/benchmark_data.json" if b == "dexa" and dataset == "original"
@@ -133,11 +156,13 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
     for selected_benchmark in benchmarks:
         for repetition in range(1, repetitions + 1):
             for run in runs:
+                name = str(run["system"])
+                wrapped = name in SYSTEMS or (":" in name and not name.endswith(".py"))
+                if selected_benchmark == "dexa" and wrapped and name != "mas":
+                    continue  # DEXA runs only MAS or a legacy MAS file.
                 folder = output / selected_benchmark if benchmark == "all" else output
                 destination = folder / f"{run['name']}_{repetition}"
                 destination.mkdir(parents=True, exist_ok=resume)
-                name = str(run["system"])
-                wrapped = name in SYSTEMS or (":" in name and not name.endswith(".py"))
                 command = [str(pythons.get(selected_benchmark) or sys.executable), str(Path(__file__).resolve()), "--benchmark", selected_benchmark,
                            "--system", name if wrapped else str((ROOT / name).resolve()),
                            "--category", category, "--limit", str(limit), "--output-dir", str(destination),
@@ -159,21 +184,27 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
                 path = paths.get(selected_benchmark) or benchmark_path
                 if path:
                     command += ["--benchmark-path", str(Path(path).resolve())]
-                if resume:
+                if resume and selected_benchmark != "dexa":
                     command.append("--resume")
                 for case_id in case_ids:
                     command += ["--case-id", case_id]
                 print(f"Running {run['name']} on {selected_benchmark} ({repetition})", flush=True)
                 write_json(destination / "command.json", command)
                 try:
-                    with (destination / "console.log").open("a" if resume else "w", encoding="utf-8") as log:
-                        result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                                env={**os.environ, "SMARTHOME_CONFIG": selected_config})
+                    # DEXA has no per-case resume: a finished run is kept, an unfinished one repeated.
+                    if resume and selected_benchmark == "dexa" and (destination / "summary.json").exists():
+                        returncode = 0
+                    else:
+                        with (destination / "console.log").open("a" if resume else "w", encoding="utf-8") as log:
+                            returncode = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                                        env={**os.environ, "SMARTHOME_CONFIG": selected_config}).returncode
                     row = {"run": run["name"], "repetition": repetition, "benchmark": selected_benchmark,
-                           "status": {0: "completed", 3: "incomplete"}.get(result.returncode, "failed"), "returncode": result.returncode}
+                           "status": {0: "completed", 3: "incomplete"}.get(returncode, "failed"), "returncode": returncode}
                 except OSError as exc:
                     row = {"run": run["name"], "repetition": repetition, "benchmark": selected_benchmark,
                            "status": "failed", "error": str(exc), "returncode": 2}
+                if (destination / "qed_leaf.json").exists():
+                    row["qed_leaf"] = json.loads((destination / "qed_leaf.json").read_text(encoding="utf-8"))["summary"].get("status")
                 if (destination / "failure.json").exists():
                     row.update(json.loads((destination / "failure.json").read_text(encoding="utf-8")))
                 if (destination / "summary.json").exists():

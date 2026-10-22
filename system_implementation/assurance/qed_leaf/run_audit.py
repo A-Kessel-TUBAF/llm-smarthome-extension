@@ -87,6 +87,14 @@ def tree_digest(root: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
+def candidate_digest() -> str:
+    """`tree_digest` of the candidate that `stage_candidate` would stage, without staging it."""
+    h = hashlib.sha256()
+    for m in sorted(CANDIDATE_MODULES):
+        h.update(f"AllocationChecker/{m}.lean".encode() + b"\0" + (LEAN_SRC / f"{m}.lean").read_bytes() + b"\0")
+    return "sha256:" + h.hexdigest()
+
+
 def protect() -> None:
     if PROTECTED.exists():
         shutil.rmtree(PROTECTED)
@@ -171,7 +179,29 @@ def analyze() -> int:
     return 0 if summary.get("status") == "passed" else 2
 
 
+def current_record() -> dict:
+    """The analyzer record for the current candidate, policy, reference and pinned revision.
+
+    `results/analyze-latest.json` is reused when all four digests match; otherwise the analyzer
+    runs again. A setup failure (e.g. no access to the QED_LEAF repository) is inconclusive.
+    """
+    expected = {"qed_leaf_revision": QED_LEAF_REV, "policy_digest": sha256(POLICY),
+                "protected_digest": tree_digest(PROTECTED), "candidate_digest": candidate_digest()}
+    latest = HERE / "results" / "analyze-latest.json"
+    if latest.exists():
+        record = json.loads(latest.read_text(encoding="utf-8"))
+        if all(record.get(k) == v for k, v in expected.items()):
+            return record
+    try:
+        analyze()
+        _publish()
+    except (OSError, subprocess.CalledProcessError, SystemExit) as exc:
+        return {**expected, "summary": {"status": "inconclusive", "reason": f"{type(exc).__name__}: {exc}"}}
+    return json.loads(latest.read_text(encoding="utf-8"))
+
+
 def _publish() -> None:
+    sys.path.insert(0, str(HERE))
     from sanitize import sanitize_results
 
     sanitize_results()

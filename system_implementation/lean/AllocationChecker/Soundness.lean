@@ -256,7 +256,7 @@ theorem taskPreKeys_eq {g : TaskGraph} {c : Command} {t : Task} (hwf : GraphWF g
   cases hl : lookupTask g c.task with
   | none =>
     simp only [lookupTask, List.find?_eq_none] at hl
-    exact absurd (by simp [ht.2]) (hl t ht.1)
+    exact absurd (beq_iff_eq.mpr ht.2) (hl t ht.1)
   | some u =>
     have hu := lookupTask_sound hl
     obtain rfl : u = t := eq_of_mem_of_nodup_map hwf.1 hu.1 ht.1 (hu.2.trans ht.2.symm)

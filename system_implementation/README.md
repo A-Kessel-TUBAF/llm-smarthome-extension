@@ -12,6 +12,7 @@ Edit **`experiment_config.toml`**. No Python edits are needed for normal runs.
 | `model` | Shared model, endpoint, generation limits, seed and timeouts |
 | `mas_models` | Shared/per-role MAS models |
 | `mas` | Execution, checks, repair, intent analysis and Lean executable |
+| `assurance` | QED_LEAF audit before runs with the Lean checker (`off`, `record`, `require`) |
 | `react`, `sage`, `dsia` | Participant overrides; SAGE checkout and worker |
 | `experiments` | System, benchmark, category, case limit, repetitions and output folder |
 | `benchmarks` | Dataset paths, Python environments and native runtime settings |
@@ -75,6 +76,43 @@ For the complete extended DEXA benchmark (automatic evaluation, no judge):
 python run_experiments.py --system mas --benchmark dexa
 ```
 
+`--benchmark all` runs all four benchmarks: DEXA, HomeBench, SimuHome and Home Assistant.
+DEXA runs only for MAS; ReAct, SAGE and DS-IA skip it. `--dataset original|extension|all` and
+`--dimension` select the DEXA cases, also with `--benchmark all`. DEXA has no automatic
+task-success score; its `summary.json` holds the execution metrics. Resume is supported for the
+three external benchmarks; a finished DEXA run is kept and an unfinished one is repeated. Native
+scores from different benchmarks are reported separately in `comparison.json` and `comparison.csv`.
+
+### Lean checker and QED_LEAF
+
+```bash
+(cd lean && lake build)                                   # checker, proofs, axiom audit
+python run_experiments.py --system mas --benchmark all --settings-json '{"checker":"lean"}'
+```
+
+The default matrix contains `lean`, the full MAS with `checker = "lean"`. Before every
+MAS run with the Lean checker, `assurance.qed_leaf` audits the checker with QED_LEAF
+(see [assurance/qed_leaf/README.md](assurance/qed_leaf/README.md)):
+
+| Mode | Behaviour |
+| --- | --- |
+| `off` | No audit |
+| `record` (default) | Reuse the audit result for unchanged Lean sources, policy, reference and QED_LEAF revision, or run the audit again; store it as `qed_leaf.json` in the run folder and in the `qed_leaf` column of `comparison.csv` |
+| `require` | As `record`, but refuse the run unless the audit passed |
+
+The first audit clones the private QED_LEAF repository, so it needs Git access to it; without
+access the result is `inconclusive`. The audit takes a few minutes; later runs reuse its result.
+
+### Windows and local Ollama
+
+- `model.model` must name an installed tag (`ollama list`). The default `ollama:gemma2:latest` is the
+  same model as `gemma2:9b`; `ollama cp gemma2:9b gemma2:latest` adds the missing tag, or set `LLM_MODEL`.
+- If every model call fails with `tokenize error ... Invalid API Key`, the environment variable
+  `LLAMA_API_KEY` is set. Ollama's internal llama.cpp server then requires that key from Ollama
+  itself. Start Ollama without it, e.g. `env -u LLAMA_API_KEY ollama serve` in Git Bash.
+- Without a dedicated GPU, Ollama runs on the CPU. `OLLAMA_IGPU_ENABLE=1` lets it use an
+  integrated GPU. A 9B model then still needs minutes per MAS call, so use `--limit` for
+  local smoke tests and an API model or a GPU machine for full runs.
 
 ## Files
 

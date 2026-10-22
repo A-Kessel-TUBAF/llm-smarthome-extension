@@ -7,13 +7,14 @@ Run from system_implementation/ after building the checker (cd lean && lake buil
     python -m unittest test_typed_arguments
 """
 
+import os
 import time
 import unittest
 from pathlib import Path
 
 import smart_home_langgraph as shl
 
-EXE = Path(__file__).parent / "lean/.lake/build/bin/allocation_checker"
+EXE = Path(__file__).parent / "lean/.lake/build/bin" / ("allocation_checker.exe" if os.name == "nt" else "allocation_checker")
 
 
 def state():
@@ -60,6 +61,9 @@ class TypedArgumentTests(unittest.TestCase):
 
     def test_out_of_range_rejected(self):
         self.assertRejected([brightness(150)])
+
+    def test_unknown_device_rejected(self):
+        self.assertRejected([action(1, "lighting", "set_brightness", device_id="light_guest_bedroom", brightness_pct=40)])
 
 
 if __name__ == "__main__":
