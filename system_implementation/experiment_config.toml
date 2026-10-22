@@ -75,6 +75,9 @@ limit = 0
 repetitions = 1
 output_dir = "logs/experiments"
 
+[benchmarks.dexa]
+path = "../benchmark/benchmark_data.json"
+
 [benchmarks.homebench]
 path = "../HomeBench/dataset"
 python = ""
