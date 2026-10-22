@@ -1702,12 +1702,16 @@ def check_allocation(state, batch, snapshot=None):
         result = subprocess.run([state["settings"]["lean_executable"], "--oneshot"], input=json.dumps(payload, allow_nan=False) + "\n",
                                 capture_output=True, text=True, timeout=15, check=True)
         response = json.loads(result.stdout)
-        # The checker echoes commands with decoded integer arguments.
+        if response.get("request_id") != payload["request_id"]:
+            raise ValueError("Lean allocation checker answered a different request.")
+        # Check the verdict first, so that a rejection reports Lean's own reason.
+        if response.get("verdict") != "accept":
+            raise ValueError(f"Lean allocation checker rejected the batch: {response.get('diagnostics', response.get('error'))}")
+        # An accepted batch is echoed with its decoded integer arguments.
         expected = [{**c, "args": [lean_value(v, kind) for v, kind in zip(c["args"], ops[c["op"]]["types"])]}
                     for c in commands]
-        if (response.get("request_id") != payload["request_id"] or response.get("commands") != expected
-                or response.get("verdict") != "accept"):
-            raise ValueError(f"Lean allocation checker rejected the batch: {response.get('diagnostics', response.get('error'))}")
+        if response.get("commands") != expected:
+            raise ValueError("Lean allocation checker accepted different commands than were sent.")
         for action in batch:
             action["dispatch_until"] = min(action["dispatch_until"], time.monotonic() + max(0, response["expires_at"] - time.time()))
     for *_, ref in references:

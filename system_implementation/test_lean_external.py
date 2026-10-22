@@ -196,6 +196,15 @@ class LeanExternalTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=value):
                 self.simuhome([self.system_mode(value)])
 
+    def test_rejection_reports_leans_reason(self):
+        for check, batch, reason in [
+                (self.simuhome, [self.system_mode(2)], "is not one of"),
+                (self.homebench, [self.brightness("living_room__light", 150)], "argument_out_of_bounds")]:
+            with self.assertRaises(ValueError) as caught:
+                check(batch)
+            self.assertIn(reason, str(caught.exception))
+            self.assertNotIn("reference value", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
