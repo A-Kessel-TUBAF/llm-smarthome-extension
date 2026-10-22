@@ -84,6 +84,7 @@ path = "../SimuHome"
 python = ""
 api_base = "http://127.0.0.1:8000/api"
 request_timeout = 60
+settle_time = 1.0          # seconds to wait before the evaluator reads the final state
 
 [benchmarks.homeassistant]
 path = "../home-assistant-datasets"
