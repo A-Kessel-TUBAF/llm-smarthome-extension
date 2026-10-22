@@ -1529,14 +1529,22 @@ def check_allocation(state, batch, snapshot=None):
 
     # Lean's operations write only their own target. A command that writes another entity's state
     # (Home Assistant's name/area tools) is checked as a command on one pseudo-device for the whole
-    # home, whose state holds every key such commands touch; commands that only read these keys
-    # read them as shared keys. Without such commands (DEXA, HomeBench, SimuHome) nothing changes.
+    # home, with every key it touches as explicit state of that device; commands that only read such
+    # keys read them as shared keys. These keys alone decide the conflicts (no exclusive target), so
+    # whole-home commands with disjoint keys stay parallel. Lean lists at most 64 keys per operation,
+    # so the keys are grouped into blocks: keys that no footprint of the batch or of a running command
+    # tells apart share one block. Without such commands (DEXA, HomeBench, SimuHome) nothing changes.
     footprints = {aid: footprint(a) for aid, a in actions.items()}
     home_actions, home_keys = set(), set()
     while found := {aid for aid, (_, w) in footprints.items() if aid not in home_actions and any(
             k.rsplit('.', 1)[0] != target_of(actions[aid]["arguments"]) or k in home_keys for k in w)}:
         home_actions |= found
         home_keys |= {k for aid in found for k in footprints[aid][0] | footprints[aid][1]}
+    relevant = [aid for aid in (*(a["task_id"] for a in batch), *reservations) if aid in footprints]
+    groups = {}
+    for k in sorted(home_keys):
+        groups.setdefault(frozenset(aid for aid in relevant if k in footprints[aid][0] | footprints[aid][1]), []).append(k)
+    block = {k: "|".join(ks) for ks in groups.values() for k in ks}
 
     def op_key(aid, a):
         # One Lean operation per device whose own schema has limits/options (external benchmarks),
@@ -1555,13 +1563,15 @@ def check_allocation(state, batch, snapshot=None):
     op_ids = {key: i for i, key in enumerate(op_keys)}
     dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}
                                                        | ({home_device} if home_actions else set())))}
-    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | home_keys | {
+    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | set(block.values()) | {
         k.rsplit('.', 1)[-1] for card in registry.values() for d in card["operations"].values()
         for k in d["reads"] + d["writes"] + [c["state"] for c in d["preconditions"] if "state" in c]})
     attr_ids = {name: i for i, name in enumerate(attrs)}
     task_ids = {name: i for i, name in enumerate(actions)}
-    key = lambda path: ([dev_ids[home_device], attr_ids[path]] if path in home_keys else
-                        [dev_ids[path.rsplit('.', 1)[0]], attr_ids[path.rsplit('.', 1)[-1]]])
+    key = lambda path: [dev_ids[path.rsplit('.', 1)[0]], attr_ids[path.rsplit('.', 1)[-1]]]
+    # State and evidence keep the real keys; footprints name whole-home keys by their block.
+    keyset = lambda paths: [list(k) for k in sorted({(dev_ids[home_device], attr_ids[block[p]]) if p in home_keys
+                                                     else tuple(key(p)) for p in paths})]
     # Finite string equality for enum preconditions; free text/list/object values remain opaque.
     strings = sorted({c["equals"] for card in registry.values() for d in card["operations"].values()
                       for c in d["preconditions"] if isinstance(c.get("equals"), str)})
@@ -1621,15 +1631,15 @@ def check_allocation(state, batch, snapshot=None):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "ge", -10**9])
             elif "equals" in c and type(c["equals"]) in (bool, int, str):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "eq", scalar(c["equals"])])
-        if at_home:  # all keys are explicit state of the whole-home pseudo-device
-            op_reads, op_writes, shared = [attr_ids[k] for k in footprint_keys[0]], [attr_ids[k] for k in footprint_keys[1]], []
+        if at_home:  # explicit whole-home keys, by block; they alone decide the conflicts
+            op_reads, op_writes = (sorted({attr_ids[block[k]] for k in ks}) for ks in footprint_keys)
+            shared, excl = [], []
         else:
             op_reads = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads})
             op_writes = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]})
-            shared = [key(k) for k in footprint_keys]
+            shared, excl = keyset(footprint_keys), [attr_ids["__target__"]]
         ops.append(dict(id=op_ids[op_key_], cap=agents.index(agent), bounds=bounds, types=types,
-                        reads=op_reads, writes=op_writes,
-                        excl=[attr_ids["__target__"]], shared_reads=shared, pre=pre,
+                        reads=op_reads, writes=op_writes, excl=excl, shared_reads=shared, pre=pre,
                         coupled=False, load_base=0, load_per_unit=0))
     devices = [dict(id=dev_ids[name], caps=[agents.index(e["agent_id"])],
                     ops=[i for (agent, skill, target, _, at_home, _), i in op_ids.items() if agent == e["agent_id"]
@@ -1677,9 +1687,8 @@ def check_allocation(state, batch, snapshot=None):
                 if view not in options:
                     options.append(view)
                 references.append((tasks[-1], index, task_ids[provider], options.index(view), offset, vals[index], ref))
-    active = [dict(reads=[key(k) for k in r], writes=[key(k) for k in w],
-                   excl=[[dev_ids[home_device if aid in home_actions else
-                                  ("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
+    active = [dict(reads=keyset(r), writes=keyset(w), excl=[] if aid in home_actions else
+                   [[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
               for aid, (r, w, t) in reservations.items()]
     payload = dict(schema="dexa-alloc-request/1", request_id=uuid4().hex, auth_ttl=30,
         catalogue=dict(revision=1, ops=ops, devices=devices, load_attr=attr_ids["__target__"], meter_key=[0, 0], load_budget=0),

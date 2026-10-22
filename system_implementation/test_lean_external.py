@@ -2,8 +2,9 @@
 whole-home commands (no LLM needed).
 
 External benchmarks describe parameters per device (HomeBench, SimuHome), mark optional values as
-nullable (Home Assistant, SimuHome), and Home Assistant's name/area tools may change any entity. The arguments are passed to `check_allocation` directly,
-without the JSON-schema validation of `validate_action`, to show what the checker itself rejects.
+nullable (Home Assistant, SimuHome), and Home Assistant's tools may change entities other than their
+target. The arguments are passed to `check_allocation` directly, without the JSON-schema validation
+of `validate_action`, to show what the checker itself rejects.
 
 Run from system_implementation/ after building the checker (cd lean && lake build):
     python -m unittest test_lean_external
@@ -50,34 +51,37 @@ OPTIONAL_HOME = {"rooms": {}, "devices": {}, "services": {
               "parameters": {"set_light": SET_LIGHT}}}}
 
 
-# Shaped like external_benchmarks/agent_registry_homeassistant.py: per-entity get_state, a generic
-# name/area tool that may change every entity, and a domain tool that changes only its domain.
-ENTITIES = {"light.kitchen": "lighting", "light.living": "lighting", "climate.hall": "thermostat"}
-ALL_KEYS = [f"device.{e}.{f}" for e in ENTITIES for f in ("state", "attributes")]
-CLIMATE_KEYS = ["device.climate.hall.state", "device.climate.hall.attributes"]
 GET_STATE = {"description": "Read.", "parameters": {"device_id": {"type": "string"}}, "output": {},
              "reads": ["device.{device_id}.state", "device.{device_id}.attributes"], "writes": [],
              "preconditions": [], "postconditions": [], "max_retries": 0}
 TURN_ON = {"service_id": {"type": "string"}, "name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}}
+SET_BRIGHTNESS = {"service_id": {"type": "string"}, "brightness": {"type": "integer", "minimum": 0, "maximum": 100}}
 SET_TEMPERATURE = {"service_id": {"type": "string"}, "temperature": {"type": "number", "minimum": 5, "maximum": 35}}
-HA_REGISTRY = {
-    "lighting": {"agent": "lighting_agent", "enabled": True, "description": "Lights.",
-                 "capabilities": ["get_state", "HassTurnOn"], "operations": {"get_state": GET_STATE, "HassTurnOn": {
-                     "description": "Turn on by name/area.", "parameters": TURN_ON, "output": {}, "reads": ALL_KEYS,
-                     "writes": ALL_KEYS, "preconditions": [], "postconditions": [], "max_retries": 0}}},
-    "thermostat": {"agent": "thermostat_agent", "enabled": True, "description": "Climate.",
-                   "capabilities": ["get_state", "HassClimateSetTemperature"], "operations": {
-                       "get_state": GET_STATE, "HassClimateSetTemperature": {
-                           "description": "Set temperature.", "parameters": SET_TEMPERATURE, "output": {},
-                           "reads": CLIMATE_KEYS, "writes": CLIMATE_KEYS, "preconditions": [],
-                           "postconditions": [], "max_retries": 0}}}}
-HA_HOME = {"rooms": {}, "devices": {e: {"agent_id": a, "room_id": None, "type": e.split(".")[0], "skills": ["get_state"]}
-                                    for e, a in ENTITIES.items()},
-           "services": {"light": {"agent_id": "lighting", "room_id": None, "type": "light", "skills": ["HassTurnOn"],
-                                  "parameters": {"HassTurnOn": TURN_ON}},
-                        "climate": {"agent_id": "thermostat", "room_id": None, "type": "climate",
-                                    "skills": ["HassClimateSetTemperature"],
-                                    "parameters": {"HassClimateSetTemperature": SET_TEMPERATURE}}}}
+
+
+def home_assistant_fixture(lights=("kitchen", "living")):
+    """Shaped like external_benchmarks/agent_registry_homeassistant.py: per-entity get_state, a name/area
+    tool that may change every entity, and domain tools that change every entity of their domain."""
+    entities = {**{f"light.{name}": "lighting" for name in lights}, "climate.hall": "thermostat"}
+    keys = lambda domain: [f"device.{e}.{f}" for e in entities if e.startswith(domain) for f in ("state", "attributes")]
+    tool = lambda parameters, affected: {"description": "Tool.", "parameters": parameters, "output": {},
+                                         "reads": affected, "writes": affected, "preconditions": [],
+                                         "postconditions": [], "max_retries": 0}
+    tools = {"light": {"HassTurnOn": tool(TURN_ON, keys("")), "HassLightSet": tool(SET_BRIGHTNESS, keys("light."))},
+             "climate": {"HassClimateSetTemperature": tool(SET_TEMPERATURE, keys("climate."))}}
+    agents = {"light": "lighting", "climate": "thermostat"}
+    registry = {agents[domain]: {"agent": agents[domain] + "_agent", "enabled": True, "description": domain,
+                                 "capabilities": ["get_state", *ops], "operations": {"get_state": GET_STATE, **ops}}
+                for domain, ops in tools.items()}
+    home = {"rooms": {}, "devices": {e: {"agent_id": a, "room_id": None, "type": e.split(".")[0], "skills": ["get_state"]}
+                                    for e, a in entities.items()},
+            "services": {domain: {"agent_id": agents[domain], "room_id": None, "type": domain, "skills": list(ops),
+                                  "parameters": {name: op["parameters"] for name, op in ops.items()}}
+                         for domain, ops in tools.items()}}
+    return home, registry
+
+
+HA_HOME, HA_REGISTRY = home_assistant_fixture()
 
 
 # Shaped like external_benchmarks/agent_registry_simuhome.py: a settable enumeration attribute
@@ -104,20 +108,25 @@ def turn_on(task_id="a1"):
     return action("lighting", "HassTurnOn", task_id, service_id="light", name="Kitchen")
 
 
+def light_set(value, task_id="a1"):
+    return action("lighting", "HassLightSet", task_id, service_id="light", brightness=value)
+
+
 def set_temperature(value, task_id="a1"):
     return action("thermostat", "HassClimateSetTemperature", task_id, service_id="climate", temperature=value)
 
 
 def get_state(entity, task_id="a1"):
-    return action(ENTITIES[entity], "get_state", task_id, device_id=entity)
+    return action("lighting" if entity.startswith("light.") else "thermostat", "get_state", task_id, device_id=entity)
 
 
 @unittest.skipUnless(EXE.is_file(), "build the Lean checker first: cd lean && lake build")
 class LeanExternalTests(unittest.TestCase):
 
-    def check(self, home_config, registry, batch):
+    def check(self, home_config, registry, batch, action_graph=None, **setup):
         state = shl.create_initial_state(home_config=home_config, agent_registry=registry,
-                                         checker="lean", lean_executable=EXE)
+                                         checker="lean", lean_executable=EXE, **setup)
+        state["action_graph"] = action_graph or {}
         try:
             shl.check_allocation(state, batch)
         finally:
@@ -185,6 +194,28 @@ class LeanExternalTests(unittest.TestCase):
         self.home_assistant([set_temperature(21, "a1"), get_state("light.kitchen", "a2")])
         with self.assertRaises(ValueError):  # reads what the thermostat command writes
             self.home_assistant([set_temperature(21, "a1"), get_state("climate.hall", "a2")])
+
+    def test_domain_commands_of_different_domains_stay_parallel(self):
+        self.home_assistant([set_temperature(21, "a1"), light_set(50, "a2")])
+        with self.assertRaises(ValueError):  # "Kitchen" may be any entity, including the lights
+            self.home_assistant([turn_on("a1"), light_set(50, "a2")])
+
+    def test_large_homes_fit_leans_key_lists(self):
+        # Lean lists at most 64 keys per operation; forty lights and a thermostat have 82.
+        home, registry = home_assistant_fixture([f"l{i}" for i in range(40)])
+        self.check(home, registry, [turn_on("a1")])
+        self.check(home, registry, [set_temperature(21, "a1"), get_state("light.l7", "a2")])
+        with self.assertRaises(ValueError):
+            self.check(home, registry, [turn_on("a1"), get_state("light.l7", "a2")])
+
+    def test_state_stays_readable_after_whole_home_commands(self):
+        # A finished whole-home command must not hide an entity's state from later preconditions.
+        home, registry = home_assistant_fixture()
+        registry["lighting"]["operations"]["get_state"] = {
+            **GET_STATE, "preconditions": [{"state": "device.{device_id}.state", "known": True}]}
+        self.check(home, registry, [get_state("light.kitchen")],
+                   observations={"device.light.kitchen.state": shl.make_observation("on", source="test")},
+                   action_graph={"h1": {**turn_on("h1"), "status": "success", "output": {}}})
 
     def test_whole_home_command_values_are_checked(self):
         with self.assertRaises(ValueError):
