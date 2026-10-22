@@ -1,8 +1,8 @@
-"""Lean admission on external-benchmark homes: per-device limits and omitted optional values
-(no LLM needed).
+"""Lean admission on external-benchmark homes: per-device limits, omitted optional values and
+whole-home commands (no LLM needed).
 
-External benchmarks describe parameters per device (HomeBench, SimuHome) and mark optional values
-as nullable (Home Assistant, SimuHome). The arguments are passed to `check_allocation` directly,
+External benchmarks describe parameters per device (HomeBench, SimuHome), mark optional values as
+nullable (Home Assistant, SimuHome), and Home Assistant's name/area tools may change any entity. The arguments are passed to `check_allocation` directly,
 without the JSON-schema validation of `validate_action`, to show what the checker itself rejects.
 
 Run from system_implementation/ after building the checker (cd lean && lake build):
@@ -50,9 +50,51 @@ OPTIONAL_HOME = {"rooms": {}, "devices": {}, "services": {
               "parameters": {"set_light": SET_LIGHT}}}}
 
 
-def action(agent, skill, **args):
-    return dict(task_id="a1", agent_id=agent, skill_id=skill, arguments=args, depends_on=[],
+# Shaped like external_benchmarks/agent_registry_homeassistant.py: per-entity get_state, a generic
+# name/area tool that may change every entity, and a domain tool that changes only its domain.
+ENTITIES = {"light.kitchen": "lighting", "light.living": "lighting", "climate.hall": "thermostat"}
+ALL_KEYS = [f"device.{e}.{f}" for e in ENTITIES for f in ("state", "attributes")]
+CLIMATE_KEYS = ["device.climate.hall.state", "device.climate.hall.attributes"]
+GET_STATE = {"description": "Read.", "parameters": {"device_id": {"type": "string"}}, "output": {},
+             "reads": ["device.{device_id}.state", "device.{device_id}.attributes"], "writes": [],
+             "preconditions": [], "postconditions": [], "max_retries": 0}
+TURN_ON = {"service_id": {"type": "string"}, "name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}}
+SET_TEMPERATURE = {"service_id": {"type": "string"}, "temperature": {"type": "number", "minimum": 5, "maximum": 35}}
+HA_REGISTRY = {
+    "lighting": {"agent": "lighting_agent", "enabled": True, "description": "Lights.",
+                 "capabilities": ["get_state", "HassTurnOn"], "operations": {"get_state": GET_STATE, "HassTurnOn": {
+                     "description": "Turn on by name/area.", "parameters": TURN_ON, "output": {}, "reads": ALL_KEYS,
+                     "writes": ALL_KEYS, "preconditions": [], "postconditions": [], "max_retries": 0}}},
+    "thermostat": {"agent": "thermostat_agent", "enabled": True, "description": "Climate.",
+                   "capabilities": ["get_state", "HassClimateSetTemperature"], "operations": {
+                       "get_state": GET_STATE, "HassClimateSetTemperature": {
+                           "description": "Set temperature.", "parameters": SET_TEMPERATURE, "output": {},
+                           "reads": CLIMATE_KEYS, "writes": CLIMATE_KEYS, "preconditions": [],
+                           "postconditions": [], "max_retries": 0}}}}
+HA_HOME = {"rooms": {}, "devices": {e: {"agent_id": a, "room_id": None, "type": e.split(".")[0], "skills": ["get_state"]}
+                                    for e, a in ENTITIES.items()},
+           "services": {"light": {"agent_id": "lighting", "room_id": None, "type": "light", "skills": ["HassTurnOn"],
+                                  "parameters": {"HassTurnOn": TURN_ON}},
+                        "climate": {"agent_id": "thermostat", "room_id": None, "type": "climate",
+                                    "skills": ["HassClimateSetTemperature"],
+                                    "parameters": {"HassClimateSetTemperature": SET_TEMPERATURE}}}}
+
+
+def action(agent, skill, task_id="a1", **args):
+    return dict(task_id=task_id, agent_id=agent, skill_id=skill, arguments=args, depends_on=[],
                 status="running", dispatch_until=time.monotonic() + 30)
+
+
+def turn_on(task_id="a1"):
+    return action("lighting", "HassTurnOn", task_id, service_id="light", name="Kitchen")
+
+
+def set_temperature(value, task_id="a1"):
+    return action("thermostat", "HassClimateSetTemperature", task_id, service_id="climate", temperature=value)
+
+
+def get_state(entity, task_id="a1"):
+    return action(ENTITIES[entity], "get_state", task_id, device_id=entity)
 
 
 @unittest.skipUnless(EXE.is_file(), "build the Lean checker first: cd lean && lake build")
@@ -71,6 +113,9 @@ class LeanExternalTests(unittest.TestCase):
 
     def optional(self, batch):
         self.check(OPTIONAL_HOME, OPTIONAL_REGISTRY, batch)
+
+    def home_assistant(self, batch):
+        self.check(HA_HOME, HA_REGISTRY, batch)
 
     def brightness(self, device, value):
         return action("lighting", "set_brightness", device_id=device, brightness=value)
@@ -100,6 +145,29 @@ class LeanExternalTests(unittest.TestCase):
         for args in ({"brightness": 150}, {"brightness": "dim"}, {"transition": "slow"}):
             with self.assertRaises(ValueError, msg=args):
                 self.optional([action("lighting", "set_light", service_id="light", **args)])
+
+    def test_whole_home_commands_alone_are_accepted(self):
+        self.home_assistant([turn_on()])
+        self.home_assistant([set_temperature(21)])
+
+    def test_whole_home_command_conflicts_with_other_writers(self):
+        # Turning on "Kitchen" may change any entity, including the thermostat.
+        with self.assertRaises(ValueError):
+            self.home_assistant([turn_on("a1"), set_temperature(21, "a2")])
+
+    def test_whole_home_command_conflicts_with_readers(self):
+        with self.assertRaises(ValueError):
+            self.home_assistant([turn_on("a1"), get_state("light.kitchen", "a2")])
+
+    def test_independent_reads_and_domain_writes_stay_parallel(self):
+        self.home_assistant([get_state("light.kitchen", "a1"), get_state("climate.hall", "a2")])
+        self.home_assistant([set_temperature(21, "a1"), get_state("light.kitchen", "a2")])
+        with self.assertRaises(ValueError):  # reads what the thermostat command writes
+            self.home_assistant([set_temperature(21, "a1"), get_state("climate.hall", "a2")])
+
+    def test_whole_home_command_values_are_checked(self):
+        with self.assertRaises(ValueError):
+            self.home_assistant([set_temperature(50)])
 
 
 if __name__ == "__main__":

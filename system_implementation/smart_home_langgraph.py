@@ -1520,26 +1520,48 @@ def check_allocation(state, batch, snapshot=None):
     entities = {f"{scope}.{i}": e for section, scope in (("devices", "device"), ("services", "service"))
                 for i, e in state["home_config"][section].items()}
     target_of = lambda args: "device." + args["device_id"] if "device_id" in args else "service." + args["service_id"]
+    home_device = "__home__"
 
-    def op_key(a):
+    def footprint(a):
+        d = registry[a["agent_id"]]["operations"][a["skill_id"]]
+        reads = d["reads"] + [c[k] for c in d["preconditions"] for k in ("state", "equals_state") if k in c]
+        return {p.format_map(a["arguments"]) for p in reads}, {p.format_map(a["arguments"]) for p in d["writes"]}
+
+    # Lean's operations write only their own target. A command that writes another entity's state
+    # (Home Assistant's name/area tools) is checked as a command on one pseudo-device for the whole
+    # home, whose state holds every key such commands touch; commands that only read these keys
+    # read them as shared keys. Without such commands (DEXA, HomeBench, SimuHome) nothing changes.
+    footprints = {aid: footprint(a) for aid, a in actions.items()}
+    home_actions, home_keys = set(), set()
+    while found := {aid for aid, (_, w) in footprints.items() if aid not in home_actions and any(
+            k.rsplit('.', 1)[0] != target_of(actions[aid]["arguments"]) or k in home_keys for k in w)}:
+        home_actions |= found
+        home_keys |= {k for aid in found for k in footprints[aid][0] | footprints[aid][1]}
+
+    def op_key(aid, a):
         # One Lean operation per device whose own schema has limits/options (external benchmarks),
         # and per set of omitted optional arguments, since Lean's arguments are positional.
         target = target_of(a["arguments"])
         own = entities.get(target, {}).get("parameters", {}).get(a["skill_id"])
         schema = own if own is not None else registry[a["agent_id"]]["operations"][a["skill_id"]]["parameters"]
         omitted = tuple(sorted(n for n, p in schema.items() if lean_schema(p)[1] and a["arguments"].get(n) is None))
-        return a["agent_id"], a["skill_id"], target if own is not None else None, omitted
+        reads, writes = footprints[aid]
+        at_home = aid in home_actions
+        keys_ = (tuple(sorted(reads)), tuple(sorted(writes))) if at_home else tuple(sorted(reads & home_keys))
+        return a["agent_id"], a["skill_id"], target if own is not None else None, omitted, at_home, keys_
 
-    keys = {aid: op_key(a) for aid, a in actions.items()}
-    op_keys = sorted(set(keys.values()), key=lambda k: (k[0], k[1], k[2] or "", k[3]))
+    keys = {aid: op_key(aid, a) for aid, a in actions.items()}
+    op_keys = sorted(set(keys.values()), key=repr)
     op_ids = {key: i for i, key in enumerate(op_keys)}
-    dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}))}
-    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | {
+    dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}
+                                                       | ({home_device} if home_actions else set())))}
+    attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | home_keys | {
         k.rsplit('.', 1)[-1] for card in registry.values() for d in card["operations"].values()
         for k in d["reads"] + d["writes"] + [c["state"] for c in d["preconditions"] if "state" in c]})
     attr_ids = {name: i for i, name in enumerate(attrs)}
     task_ids = {name: i for i, name in enumerate(actions)}
-    key = lambda path: [dev_ids[path.rsplit('.', 1)[0]], attr_ids[path.rsplit('.', 1)[-1]]]
+    key = lambda path: ([dev_ids[home_device], attr_ids[path]] if path in home_keys else
+                        [dev_ids[path.rsplit('.', 1)[0]], attr_ids[path.rsplit('.', 1)[-1]]])
     # Finite string equality for enum preconditions; free text/list/object values remain opaque.
     strings = sorted({c["equals"] for card in registry.values() for d in card["operations"].values()
                       for c in d["preconditions"] if isinstance(c.get("equals"), str)})
@@ -1547,8 +1569,10 @@ def check_allocation(state, batch, snapshot=None):
                         strings.index(v) + 2 if isinstance(v, str) and v in strings else 0)
     ops, fields = [], {}
     for op_key_ in op_keys:
-        agent, skill, target, omitted = op_key_
+        agent, skill, target, omitted, at_home, footprint_keys = op_key_
         d = registry[agent]["operations"][skill]
+        if at_home and d["preconditions"]:
+            raise ValueError(f"Lean: preconditions of the whole-home command {skill} cannot be checked.")
         parameters = entities[target]["parameters"][skill] if target else d["parameters"]
         projected, bounds, types = [], [], []
         for name, schema in parameters.items():
@@ -1589,16 +1613,25 @@ def check_allocation(state, batch, snapshot=None):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "ge", -10**9])
             elif "equals" in c and type(c["equals"]) in (bool, int, str):
                 pre.append([attr_ids[c["state"].rsplit('.', 1)[-1]], "eq", scalar(c["equals"])])
+        if at_home:  # all keys are explicit state of the whole-home pseudo-device
+            op_reads, op_writes, shared = [attr_ids[k] for k in footprint_keys[0]], [attr_ids[k] for k in footprint_keys[1]], []
+        else:
+            op_reads = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads})
+            op_writes = sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]})
+            shared = [key(k) for k in footprint_keys]
         ops.append(dict(id=op_ids[op_key_], cap=agents.index(agent), bounds=bounds, types=types,
-                        reads=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in reads}),
-                        writes=sorted({attr_ids[p.rsplit('.', 1)[-1]] for p in d["writes"]}),
-                        excl=[attr_ids["__target__"]], shared_reads=[], pre=pre,
+                        reads=op_reads, writes=op_writes,
+                        excl=[attr_ids["__target__"]], shared_reads=shared, pre=pre,
                         coupled=False, load_base=0, load_per_unit=0))
     devices = [dict(id=dev_ids[name], caps=[agents.index(e["agent_id"])],
-                    ops=[i for (agent, skill, target, _), i in op_ids.items() if agent == e["agent_id"]
-                         and target in (None, name) and skill in e["skills"]
+                    ops=[i for (agent, skill, target, _, at_home, _), i in op_ids.items() if agent == e["agent_id"]
+                         and not at_home and target in (None, name) and skill in e["skills"]
                          and registry[agent]["enabled"] and skill in registry[agent]["capabilities"]])
                for name, e in entities.items()]
+    if home_actions:
+        home_ops = {i: k[0] for k, i in op_ids.items() if k[4]}
+        devices.append(dict(id=dev_ids[home_device], caps=sorted({agents.index(a) for a in home_ops.values()}),
+                            ops=sorted(home_ops)))
     ranks, tasks, evidence, commands = {}, [], [], []
     views, references = {}, []
     selected_ids = {a["task_id"] for a in batch}
@@ -1613,7 +1646,7 @@ def check_allocation(state, batch, snapshot=None):
         verified = a["status"] == "success" and a.get("verified", False)
         tasks.append(dict(id=task_ids[aid], status="pending" if aid in selected_ids else
                           "verified" if verified else "failed" if a["status"] in {"failed", "blocked"} else "pending",
-                          op=op_ids[keys[aid]], device=dev_ids[target],
+                          op=op_ids[keys[aid]], device=dev_ids[home_device if aid in home_actions else target],
                           # Only the batch's tasks need their arguments (for the contract check).
                           args=[{"lit": v} for v in vals] if aid in selected_ids else [],
                           deps=[task_ids[d] for d in a["depends_on"]], rank=ranks[aid], pre=[], deadline=10**12))
@@ -1621,7 +1654,8 @@ def check_allocation(state, batch, snapshot=None):
             evidence.append(dict(task=task_ids[aid], verified=True, valid_until=int(a["valid_until"]), output=None,
                                  basis=[[*key(k), v] for k, v in a["evidence_versions"].items()]))
         if aid in selected_ids:
-            commands.append(dict(task=task_ids[aid], device=dev_ids[target], op=op_ids[keys[aid]], args=vals))
+            commands.append(dict(task=task_ids[aid], device=dev_ids[home_device if aid in home_actions else target],
+                                 op=op_ids[keys[aid]], args=vals))
             for index, name in enumerate(fields[keys[aid]]):
                 ref = a.get("argument_sources", {}).get(name)
                 if not ref or ref.get("format") == "text":
@@ -1636,8 +1670,9 @@ def check_allocation(state, batch, snapshot=None):
                     options.append(view)
                 references.append((tasks[-1], index, task_ids[provider], options.index(view), offset, vals[index], ref))
     active = [dict(reads=[key(k) for k in r], writes=[key(k) for k in w],
-                   excl=[[dev_ids[("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
-              for r, w, t in reservations.values()]
+                   excl=[[dev_ids[home_device if aid in home_actions else
+                                  ("device." if t[0] == "device_id" else "service.") + t[1]], attr_ids["__target__"]]])
+              for aid, (r, w, t) in reservations.items()]
     payload = dict(schema="dexa-alloc-request/1", request_id=uuid4().hex, auth_ttl=30,
         catalogue=dict(revision=1, ops=ops, devices=devices, load_attr=attr_ids["__target__"], meter_key=[0, 0], load_budget=0),
         graph=dict(revision=1, tasks=tasks),
