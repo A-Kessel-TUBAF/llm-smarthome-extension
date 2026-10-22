@@ -68,6 +68,7 @@ class Session:
         self.hass, self.api, self.loop = hass, api, asyncio.get_running_loop()
         self.entities, self.rooms, self.user_location = entities, rooms, user_location
         self.reference_time, self.calls = reference_time, []
+        self.technical_error = False
         self.timeout = load_config()["benchmarks"]["homeassistant"]["tool_timeout"]
 
     def wait(self, coroutine):
@@ -76,6 +77,7 @@ class Session:
             return future.result(timeout=self.timeout)
         except TimeoutError:
             future.cancel()
+            self.technical_error = True
             raise
 
     async def episode(self, request):
@@ -119,6 +121,8 @@ class Session:
                 return data
             except Exception as exc:
                 entry["error"] = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, OSError):
+                    self.technical_error = True
                 raise
         return self.wait(invoke())
 
@@ -179,18 +183,17 @@ async def test_assist_case(hass, synthetic_home_config_entry, entity_registry, e
     difference.prepare(eval_task.action.expect_changes or {}, eval_task.action.ignore_changes or {})
     session = await setup(hass, synthetic_home_config_entry, eval_task)
     episode = await session.episode(eval_task.input_text)
-    report, error = {}, None
+    report = {}
     def execute():
-        nonlocal report, error
+        nonlocal report
         report = system_report(assist_runner.system, episode)
-        error = report.get("exception")
     started = time.perf_counter()
     with patch("homeassistant.util.dt.now", return_value=datetime.fromisoformat(session.reference_time)):
         await asyncio.to_thread(execute)
         await hass.async_block_till_done()
     row = {"id": assist_case["id"], "native_task_id": eval_task.task_id, "category": eval_task.categories,
         "input": eval_task.input_text, "answer": report.get("answer", ""), "report": report,
-        "error": error or report.get("error"), "exception": error, "latency_s": time.perf_counter() - started,
+        "error": report.get("error"), "exception": report.get("exception"), "latency_s": time.perf_counter() - started,
         "reference_time": session.reference_time, "user_location": session.user_location,
         "expected": asdict(eval_task.action), "native_calls": session.calls,
         "model_usage": report.get("model_usage", summarize_calls([]))}
@@ -200,9 +203,8 @@ async def test_assist_case(hass, synthetic_home_config_entry, entity_registry, e
     except Exception as exc:
         row["evaluation_error"] = f"{type(exc).__name__}: {exc}"
         row["score"] = {"success": None, "checks": {}}
-    if row["error"]:
-        row["score"]["success"] = False
-    row["completed"] = not (error or row.get("evaluation_error") or report.get("backend_unavailable"))
+    row["technical_error"] = bool(session.technical_error or report.get("technical_error") or report.get("backend_unavailable"))
+    row["completed"] = not (row["technical_error"] or row.get("evaluation_error"))
     assist_runner.save(row)
     if report.get("backend_unavailable"):
         pytest.exit("Model backend unavailable; case saved, configure endpoint and --resume.", returncode=2)
@@ -210,7 +212,8 @@ async def test_assist_case(hass, synthetic_home_config_entry, entity_registry, e
 
 def summarize(rows):
     scored = [row for row in rows if row["score"]["success"] is not None]
-    return {"cases": len(rows), "evaluated_cases": len(scored),
+    return {"cases": len(rows), "incomplete_cases": sum(not row["completed"] for row in rows),
+        "evaluated_cases": len(scored),
         "success_rate": sum(row["score"]["success"] for row in scored) / len(scored) if scored else None,
         "errors": sum(bool(row.get("error")) for row in rows),
         "evaluation_errors": sum(bool(row.get("evaluation_error")) for row in rows),

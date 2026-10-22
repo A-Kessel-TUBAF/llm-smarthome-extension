@@ -192,11 +192,15 @@ def run_episode(root, start):
                 tool.requests_module = Requests()
         # Input contains only the same public information supplied to every participant.
         command = "benchmark_user: " + start["request"] + "\n\nPublic benchmark context: " + json.dumps(context, ensure_ascii=False)
-        response = coordinator.execute(command)
-        answer = response["output"]
-        stopped = answer.startswith("Agent stopped due to")
-        return {"answer": answer, "status": "max_steps" if stopped else "finished",
-                "error": answer if stopped else None}
+        try:
+            response = coordinator.execute(command)
+            answer = response["output"]
+            stopped = answer.startswith("Agent stopped due to")
+            return {"answer": answer, "status": "max_steps" if stopped else "finished",
+                    "error": answer if stopped else None}
+        except Exception as exc:
+            # Original decision/tool-input failures are completed attempts.
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "exception": type(exc).__name__}
 
 
 def main():
@@ -212,7 +216,8 @@ def main():
     try:
         report = run_episode(root, start)
     except Exception as exc:
-        report = {"status": "error", "error": f"{type(exc).__name__}: {exc}", "exception": type(exc).__name__}
+        report = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
+                  "exception": type(exc).__name__, "technical_error": True}
     emit({"kind": "result", "report": report})
 
 

@@ -1,31 +1,20 @@
-# Central experiment settings (Python 3.11+ TOML).
-#
-# NOTE: reconstructed by a contributor. Since commit 46d27d0 the code reads the sections below,
-# but the committed file was still the old flat MAS file, so importing the system failed with
-# KeyError: 'model'. The [mas] values are those of that file (plus domain_agents_enabled); all
-# other values are defaults inferred from the code and README. If the maintainer has an own
-# version of this file, it can simply replace this one.
-#
-# Environment variables take precedence where the code supports them, e.g. LLM_MODEL,
-# OPENAI_BASE_URL, HOMEBENCH_PATH, SIMUHOME_PATH, HOMEASSISTANT_DATASET_PATH,
-# SIMULATOR_API_BASE_URL. Paths are relative to system_implementation/.
-
+# CLI and environment override this file. Paths are project-relative.
 [model]
-model = "ollama:gemma2"
+model = "ollama:gemma2:latest"
 api_base = ""
 temperature = 0.0
 seed = 42
-max_tokens = 4096
-context_window = 8192
-request_timeout = 120     # seconds; a stalled API call fails instead of hanging the run
-json_mode = true
+max_tokens = 1024
+context_window = 32768
+request_timeout = 60.0
+episode_timeout = 300.0  # ReAct/SAGE/DS-IA.
 
 [mas_models]
 same_for_all = true
-roles = {}
+[mas_models.roles]
+# planner = "openai:your-model"
 
 [mas]
-domain_agents_enabled = true
 # Preparation and recovery (repair_enabled=false overrides the four recovery switches).
 auto_prepare = true
 repair_enabled = true
@@ -54,89 +43,114 @@ include_operations = true
 include_conditions = true
 search_mode = "fixtures"
 
-[react]
-max_steps = 10
-episode_timeout = 600
+domain_agents_enabled = true
+lean_executable = ""
 
-[sage]
-sage_path = "../SAGE"
-sage_python = ""
-max_llm_calls = 50
-episode_timeout = 600
+[react]
+max_steps = 20
+json_mode = true
 
 [dsia]
-episode_timeout = 600
+json_mode = false
+
+[sage]
+sage_path = "~/SAGE"
+sage_python = ".venv-sage/bin/python"
+max_steps = 15
+max_llm_calls = 60
 
 [experiments]
-system = "mas"
 benchmark = "homebench"
+system = ""  # Empty selects the runs below.
 category = "all"
 limit = 0
 repetitions = 1
 output_dir = "logs/experiments"
 
+[benchmarks.homebench]
+path = "~/HomeBench/dataset"
+python = ".venv-bench/bin/python"
+
+[benchmarks.simuhome]
+path = "~/SimuHome"
+python = "~/SimuHome/.venv/bin/python"
+api_base = "http://127.0.0.1:8000/api"
+request_timeout = 10.0
+settle_time = 0.5
+
+[benchmarks.homeassistant]
+path = "~/home-assistant-datasets/datasets/assist"
+python = ".venv-homeassistant/bin/python"
+tool_timeout = 120.0
+
 [benchmarks.dexa]
 path = "../benchmark/benchmark_data.json"
 
-[benchmarks.homebench]
-path = "../HomeBench/dataset"
-python = ""
-
-[benchmarks.simuhome]
-path = "../SimuHome"
-python = ""
-api_base = "http://127.0.0.1:8000/api"
-request_timeout = 60
-settle_time = 1.0          # seconds to wait before the evaluator reads the final state
-
-[benchmarks.homeassistant]
-path = "../home-assistant-datasets"
-python = ""
-tool_timeout = 30
-
 [judge]
-model = "ollama:gemma2"
-api_base = ""
-temperature = 0.0
-request_timeout = 120
-seeds = [1]
+model = "gemma2:latest"
+api_base = "http://127.0.0.1:11434/v1"
+temperature = 1.0
+seeds = [42, 43, 44]
+request_timeout = 120.0
 
-# MAS ablation matrix; each entry overrides only its differences.
 [[runs]]
 name = "minimal_sequential"
 system = "mas"
-settings = { dependency_graph = false, parallel_agents = false, parallel_actions = false, auto_prepare = false, repair_enabled = false, intent_analysis_enabled = false, validate_contracts = false, check_outcomes = false, include_operations = false, include_conditions = false, checker = "python", scheduler_mode = "python", max_workers = 1 }
+[runs.settings]
+dependency_graph = false
+parallel_agents = false
+parallel_actions = false
+auto_prepare = false
+repair_enabled = false
+intent_analysis_enabled = false
+validate_contracts = false
+check_outcomes = false
+include_operations = false
+include_conditions = false
+checker = "python"
+scheduler_mode = "python"
+max_workers = 1
 
 [[runs]]
 name = "extended"
 system = "mas"
 
 [[runs]]
+name = "planner_only"
+system = "mas"
+[runs.settings]
+domain_agents_enabled = false
+intent_analysis_enabled = false
+scheduler_mode = "python"
+
+[[runs]]
 name = "sequential"
 system = "mas"
-settings = { parallel_agents = false, parallel_actions = false }
+[runs.settings]
+parallel_agents = false
+parallel_actions = false
 
 [[runs]]
 name = "llm_scheduler"
 system = "mas"
-settings = { scheduler_mode = "llm" }
+[runs.settings]
+scheduler_mode = "llm"
 
 [[runs]]
 name = "without_preparation_repair"
 system = "mas"
-settings = { auto_prepare = false, repair_enabled = false }
+[runs.settings]
+auto_prepare = false
+repair_enabled = false
 
 [[runs]]
 name = "intent_analyser"
 system = "mas"
-settings = { intent_analysis_enabled = true }
+[runs.settings]
+intent_analysis_enabled = true
 
 [[runs]]
 name = "lean"
 system = "mas"
-settings = { checker = "lean" }
-
-[[runs]]
-name = "planner_only"
-system = "mas"
-settings = { domain_agents_enabled = false, intent_analysis_enabled = false, scheduler_mode = "python" }
+[runs.settings]
+checker = "lean"

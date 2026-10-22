@@ -35,6 +35,7 @@ class Session:
     def __init__(self, client):
         self.client, self.calls, self.lock = client, [], RLock()
         self.cycle_predictions = {}
+        self.technical_error = False
 
     def episode(self, request, context):
         from src.agents.tools import TOOL_REGISTRY
@@ -110,6 +111,9 @@ class Session:
                 call.setdefault("outcome", {"ok": False, "status_code": None, "error_type": type(exc).__name__})
                 call["error"] = str(exc)
                 response = getattr(exc, "response", None)
+                code = response.status_code if response is not None else call["outcome"]["status_code"]
+                if (code is not None and code >= 500) or (code is None and isinstance(exc, OSError)):
+                    self.technical_error = True
                 if response is not None:
                     call["outcome"]["status_code"] = response.status_code
                     call["observation"] = {"error": response.text}
@@ -155,7 +159,8 @@ def load(path, category="all", case_ids=(), limit=0):
 def summarize(rows):
     evaluated = [r for r in rows if r["evaluation"]["score"] in (0, 1)]
     judge_usage = summarize_calls([call for row in rows for call in row.get("judge_calls", [])])
-    return {"cases": len(rows), "evaluated_cases": len(evaluated),
+    return {"cases": len(rows), "incomplete_cases": sum(not r["completed"] for r in rows),
+        "evaluated_cases": len(evaluated),
         "successes": sum(r["evaluation"]["score"] == 1 for r in evaluated),
         "success_rate": sum(r["evaluation"]["score"] == 1 for r in evaluated) / len(evaluated) if evaluated else None,
         "evaluation_errors": len(rows) - len(evaluated),
@@ -264,11 +269,10 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
                                        "tools_invoked": session.calls, "steps": steps}, judge_llms))
             except Exception as exc:
                 evaluation = {"score": -1, "error_type": f"{type(exc).__name__}: {exc}"}
-            if error and evaluation["score"] == 1:
-                evaluation = {**evaluation, "score": 0, "system_error": error}
         except Exception as exc:
             exception = error = f"{type(exc).__name__}: {exc}"
             evaluation = {"score": -1, "error_type": exception}
+            session.technical_error = True
         elapsed = time.perf_counter() - started
         judge_calls = [judge.last_call for judge in judge_llms if getattr(judge, "last_call", None)]
         row = {"id": file.stem, "category": qt + "/" + episode["meta"]["case"], "input": episode["query"], "answer": report.get("answer", ""),
@@ -278,7 +282,8 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
                "judge_calls": judge_calls, "judge_usage": summarize_calls(judge_calls),
                "report": report, "model_usage": report.get("model_usage", summarize_calls([])),
                "tools_invoked": session.calls, "final_home_state": final_state,
-               "completed": not (exception or pending_judge or evaluation["score"] == -1 or report.get("backend_unavailable"))}
+               "technical_error": bool(session.technical_error or report.get("technical_error") or report.get("backend_unavailable"))}
+        row["completed"] = not (row["technical_error"] or pending_judge or evaluation["score"] == -1)
         rows.append(row)
         write_json(case_file(output, file.stem), row)
         write_json(output / "summary.json", {"overall": summarize(rows),
