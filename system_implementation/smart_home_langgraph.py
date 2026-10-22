@@ -773,6 +773,19 @@ def execute_action(state):
     return Command(update={"task_results": [result]}, goto="complete_round")
 
 
+def _scope_ids(scope):
+    """Normalize clear planner scopes without discarding invalid restrictions."""
+    if isinstance(scope, dict):
+        if not scope or set(scope) - {"room_id", "device_id"}:
+            raise ValueError("PlanError: scope objects may contain only room_id and device_id.")
+        scope = list(scope.values())
+    if isinstance(scope, str):
+        scope = [scope]
+    if not isinstance(scope, list) or any(not isinstance(item, str) or not item.strip() for item in scope):
+        raise ValueError("PlanError: scope must contain nonempty room/device ID strings.")
+    return list(dict.fromkeys(scope))
+
+
 def planner_response_schema(agents):
     """Keep task descriptions separate from executable tool calls."""
     strings = {"type": "array", "items": {"type": "string"}}
@@ -782,6 +795,7 @@ def planner_response_schema(agents):
     task = {"type": "object", "required": ["agent_id", "action"], "properties": {
         "task_id": {"type": "string"}, "agent_id": {"type": "string", "enum": list(agents)},
         "action": {"type": "string", "minLength": 1}, "depends_on": strings,
+        "scope": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "requirements": {"type": "array", "items": operation},
         "actions": {"type": "array", "items": operation}}}
     return {"type": "object", "required": ["task_queue"], "properties": {
@@ -798,7 +812,7 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
     schema = planner_response_schema(context["available_agents"]) if role == "planner" and context.get("available_agents") else None
     if schema and context.get("domain_planning_only"):
         task_schema = schema["properties"]["task_queue"]["items"]
-        task_schema["properties"]["scope"] = {"type": "array", "minItems": 1, "items": {"type": "string"}}
+        task_schema["properties"]["scope"]["minItems"] = 1
         task_schema["required"].append("scope")
         for field in ("actions", "requirements"):
             task_schema["properties"][field] = {"type": "array", "maxItems": 0}
@@ -806,7 +820,8 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
         task_schema = schema["properties"]["task_queue"]["items"]
         task_schema["required"].append("actions")
         task_schema["properties"]["actions"]["minItems"] = 1
-    messages = [SystemMessage(content=instructions + "\nReturn only the requested JSON object; no explanation."),
+    messages = [SystemMessage(content=instructions + "\nReturn one JSON object with the requested fields and actual values. "
+                             "Do not return a schema, catalogue, example, or Markdown."),
                 HumanMessage(content=json.dumps(context, ensure_ascii=False, separators=(",", ":")))]
     # Keep the actual request visible after the catalogue, too. This does not add new input.
     request = context.get("original_input", context.get("user_message"))
@@ -838,6 +853,10 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, **cont
         for field, kind in (expected or {}).items():
             if field not in result or not isinstance(result[field], kind):
                 raise ValueError(f"Modellantwort: {field!r} fehlt oder ist kein {kind.__name__}.")
+        if role == "planner" and isinstance(result.get("task_queue"), list):
+            for task in result["task_queue"]:
+                if isinstance(task, dict) and "scope" in task:
+                    task["scope"] = _scope_ids(task["scope"])
         if schema:
             Draft202012Validator(schema).validate(result)
         return result
@@ -891,7 +910,7 @@ def task_planner(state):
     available = get_available_agents(state)
     graph_mode = state["settings"]["dependency_graph"]
     planner_only = not state["settings"]["domain_agents_enabled"]
-    graph_instruction = (' Give each task a unique task_id (e.g. t1), scope (room/device IDs), constraints '
+    graph_instruction = (' Give each task a unique task_id (e.g. t1), scope, constraints '
                          '(conditions, timing, quantities, negation), and depends_on list of task-ID strings. '
                          'Example: depends_on=["t1", "t2"]. Never put objects or dictionaries in depends_on. '
                          'Independent goals have depends_on=[]. A task that needs earlier effects/information '
@@ -920,7 +939,7 @@ def task_planner(state):
     if repair:
         context.update(repair=repair, tasks=state["tasks"], confirmed_results=state["task_history"])
     try:
-        result = _ask('Plan the ENTIRE original_input as JSON. Do not describe the catalogue. '
+        result = _ask('Plan the ENTIRE original_input as JSON. '
                       'Create one task per distinct user goal; preserve order, locations, quantities and conditions. '
                       'Use only agent IDs and device/service IDs from available_agents. '
                       'Methods are in entity.methods or the agent card methods_by_type[entity.type]. '
@@ -930,7 +949,8 @@ def task_planner(state):
                       'Current values are in each entity.state. '
                       'task.action MUST be a plain-language STRING describing the user goal, never a tool-call object. '
                       'Concrete tool calls belong only in task.actions, an ARRAY of objects. '
-                      'Give scope as room/device IDs, constraints as strings. '
+                      'Give scope as a list of room/device ID strings, e.g. scope=["living_room"]; never an object. '
+                      'Give constraints as strings. '
                       'Give requirements=[{skill_id,arguments}] for requested outcomes with known targets/values; '
                       'include every requested device. '
                       + ('You are the sole action planner. Every task MUST include a nonempty actions array. '
@@ -945,7 +965,8 @@ def task_planner(state):
                       'For missing predecessor data use {"from_task":"<task ID>","field":"<output field>"}; declare its dependency. '
                       'For displays set source_field to events, inventory or results; literal_content=true only for explicit user text/URLs. '
                       'For each invalid user subrequest add {"request":"<original clause>","reason":"<unavailable device/method/value>"} '
-                      'to rejected_requests and keep the valid tasks. Do not invent devices or substitute another device type. '
+                      'only to rejected_requests, never as a tool call. Keep the valid tasks. '
+                      'Do not invent devices or substitute another device type. '
                       'Check contradictory times against reference_time and observed appliance states; explain conflicts instead of guessing. '
                       'Reject only when evidence establishes impossibility; '
                       + ('plan read actions for uncertain state questions. ' if planner_only else
@@ -1085,7 +1106,7 @@ def _agent(state, agent):
                     'use "format":"text" for records/lists. Retrieve missing data through collaboration. '
                     'Return ordered calls with concrete IDs using operation parameters/conditions. '
                     'Add prerequisites only when required by the listed operation preconditions; never assume turn_on is required. '
-                    'Do not invent catalog entries or genre matches. '
+                    'Use only listed operations; never turn an error message into a skill_id. Do not invent genre matches. '
                     'Use current state, cards and previous confirmed results. Include prerequisite actions yourself. '
                     'Never fabricate inventory, time, appointments or search facts. For ALL devices emit separate calls. '
                     'For information questions use only read methods; obtain the requested values without changing devices. '
@@ -1100,6 +1121,7 @@ def _agent(state, agent):
                     'Read anchor state first or request information from its domain; never invent a duration or end time. '
                     'Check all timing claims together; reject contradictions and impossible completion deadlines before control writes. '
                     'Reject unavailable capabilities or unreachable goals only with catalogue/state/rule evidence. '
+                    'Report unsupported subrequests only in rejected_requests, never as tool calls. '
                     'Return rejected_requests=[{"request":"<clause>","reason":"<observed limitation or conflict>"}]; '
                     'actions may be empty for a justified rejection. Keep independent achievable actions. '
                     'Execution/format errors are not evidence that the user request is impossible. '

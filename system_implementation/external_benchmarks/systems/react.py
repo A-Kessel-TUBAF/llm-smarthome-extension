@@ -24,8 +24,9 @@ Finish with {"action":"finish","action_input":{"answer":"<answer to the user>",
 "rejected_requests":[{"request":"<unfulfillable clause>","reason":"<reason>"}]}}.
 Use an empty rejected_requests list when none are rejected. Complete valid parts of a mixed request.
 For ambiguity, ask a clarification question in the final answer; do not choose an arbitrary target.
-HomeBench scores every attempted device command, including repeats and invalid attempts, plus one
-error_input per explicitly rejected clause. Its tools use a local state model, not a physics simulator.
+Actions must be supplied tool names or finish. Report unfulfillable clauses only through
+finish.action_input.rejected_requests; never invent an error-reporting tool.
+HomeBench tools use a local state model, not a physics simulator.
 For SimuHome, command or workflow acceptance alone does not establish future physical success.
 For Home Assistant, use the native Assist tools and their targeting instructions.
 """
