@@ -14,3 +14,7 @@ venv/
 
 # External benchmark checkouts and their environments
 external/
+
+# Benchmark and evaluation environments; large rebuilt task file
+.venv-*/
+system_implementation/results/dgx/tasks/t2_homebench_validity.jsonl
