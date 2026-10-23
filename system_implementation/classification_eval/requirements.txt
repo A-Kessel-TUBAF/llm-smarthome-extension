@@ -1,6 +1,6 @@
-# Separate environment (.venv-clf), not the MAS environment. On the DGX-2 (V100, sm_70) install
-# torch from a CUDA index that still includes Volta kernels, e.g.:
-#   uv pip install --python .venv-clf/bin/python torch --index-url https://download.pytorch.org/whl/cu126
+# Separate environment (.venv-clf), not the MAS environment. V100 GPUs (DGX-2, sm_70) need a torch
+# build with Volta kernels; torch 2.14.1+cu126 has none, 2.8.0+cu126 works (checked on the DGX-2):
+#   uv pip install --python .venv-clf/bin/python "torch==2.8.0" --index-url https://download.pytorch.org/whl/cu126
 torch
 transformers>=4.56
 numpy

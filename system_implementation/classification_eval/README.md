@@ -31,7 +31,7 @@ is called better only if that CI excludes 0 (and at least 20 items are shared).
 ```bash
 cd ~/dgx_eval/repo/system_implementation
 uv venv --python 3.13 .venv-clf
-uv pip install --python .venv-clf/bin/python torch --index-url https://download.pytorch.org/whl/cu126
+uv pip install --python .venv-clf/bin/python "torch==2.8.0" --index-url https://download.pytorch.org/whl/cu126  # V100: sm_70 kernels
 uv pip install --python .venv-clf/bin/python -r classification_eval/requirements.txt
 
 .venv-bench/bin/python -m classification_eval.tasks                          # T1-T3 -> results/dgx/tasks
