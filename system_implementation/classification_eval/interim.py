@@ -81,7 +81,9 @@ def main(argv=None):
             else:
                 main_metrics = f"success rate {fmt(s.get('success_rate'))} ({s.get('evaluated_cases')} evaluated)"
             if benchmark == "simuhome":
-                failures = Counter((r.get("evaluation") or {}).get("error_type") or "success" for r in rows)
+                failures = Counter("success" if (r.get("evaluation") or {}).get("score") == 1 else
+                                   "judge error" if (r.get("evaluation") or {}).get("score") == -1 else
+                                   (r.get("evaluation") or {}).get("error_type") or "failed (no error type)" for r in rows)
                 notes.append("SimuHome outcomes: " + ", ".join(f"{k}: {v}" for k, v in failures.most_common()))
             errors, latency = s.get("errors"), s.get("mean_latency_s")
         print(f"| {benchmark} | {done} | {main_metrics} | {errors} | {fmt(latency)} | {leaf} |")
