@@ -1,0 +1,182 @@
+# DGX-2 runs with Gemma 4 (see results/dgx). Same as experiment_config.toml except [model] and
+# [judge]. Ollama runs one server per GPU on ports 11500-11507; set OLLAMA_BASE_URL per process.
+[model]
+model = "ollama:gemma4:31b"
+api_base = ""
+temperature = 0.0
+seed = 42
+max_tokens = 1024
+context_window = 32768
+request_timeout = 300.0
+retry_delays = [2.0, 4.0]  # Additional attempts after HTTP 500; [] disables retries.
+episode_timeout = 1800.0  # ReAct/SAGE/DS-IA.
+think = false  # Gemma 4 thinks by default; off: about 5x fewer tokens, no truncated JSON.
+
+[mas_models]
+same_for_all = true
+[mas_models.roles]
+# planner = "openai:your-model"
+
+[mas]
+# Preparation and recovery (repair_enabled=false overrides the four recovery switches).
+auto_prepare = true
+repair_enabled = true
+local_repair = true
+planner_replan = true
+action_retries = true
+dispatch_retries = true
+max_repairs = 1
+max_replans = 1
+max_dispatch_retries = 2
+
+# Execution
+parallel_agents = true
+parallel_actions = true
+dependency_graph = true
+scheduler_mode = "python"
+max_workers = 4
+recursion_limit = 200
+
+# Additional components and prompt contents
+intent_analysis_enabled = false
+checker = "python"
+validate_contracts = true
+check_outcomes = true
+include_operations = true
+include_conditions = true
+search_mode = "fixtures"
+
+domain_agents_enabled = true
+lean_executable = ""
+
+[assurance]
+# QED_LEAF audit of the Lean checker before each MAS run with checker = "lean" (assurance/qed_leaf/).
+# "off": skip; "record": reuse the result for unchanged sources or re-run the audit, and record it
+# (qed_leaf.json, comparison column qed_leaf); "require": also refuse the run unless QED_LEAF passed.
+qed_leaf = "record"
+
+[react]
+max_steps = 20
+json_mode = true
+
+[dsia]
+json_mode = false
+
+[sage]
+sage_path = "~/SAGE"
+sage_python = ".venv-sage/bin/python"
+max_steps = 15
+max_llm_calls = 60
+
+[experiments]
+benchmark = "all"
+system = ""  # Empty selects the runs below.
+category = "all"
+limit = 0
+repetitions = 1
+output_dir = "logs/experiments"
+
+[benchmarks.homebench]
+path = "~/HomeBench/dataset"
+python = ".venv-bench/bin/python"
+
+[benchmarks.simuhome]
+path = "~/SimuHome"
+python = "~/SimuHome/.venv/bin/python"
+api_base = "http://127.0.0.1:8000/api"
+request_timeout = 10.0
+settle_time = 0.5
+
+[benchmarks.homeassistant]
+path = "~/home-assistant-datasets/datasets/assist"
+python = ".venv-homeassistant/bin/python"
+tool_timeout = 120.0
+
+[benchmarks.dexa]
+path = "../benchmark/extension_tasks.json"
+python = ""  # Empty uses the interpreter launching run_experiments.py.
+
+[judge]
+# SimuHome judge prompts are about 28,000 tokens; gemma2 accepts at most 8,192, and Ollama's
+# OpenAI-compatible endpoint uses the server's default context (4,096), silently cutting the prompt.
+# Gemma 4 31B on its own server with OLLAMA_CONTEXT_LENGTH=49152 (65536 does not fit one V100; longest
+# judge prompt seen: 33,748 tokens) and OLLAMA_NUM_PARALLEL=1.
+model = "gemma4:31b"
+api_base = "http://127.0.0.1:11504/v1"
+temperature = 1.0
+seeds = [42, 43, 44]
+request_timeout = 600.0
+
+[[runs]]
+name = "minimal_sequential"
+system = "mas"
+[runs.settings]
+dependency_graph = false
+parallel_agents = false
+parallel_actions = false
+auto_prepare = false
+repair_enabled = false
+intent_analysis_enabled = false
+validate_contracts = false
+check_outcomes = false
+include_operations = false
+include_conditions = false
+checker = "python"
+scheduler_mode = "python"
+max_workers = 1
+
+[[runs]]
+name = "extended"
+system = "mas"
+
+[[runs]]
+name = "planner_only"
+system = "mas"
+[runs.settings]
+domain_agents_enabled = false
+intent_analysis_enabled = false
+scheduler_mode = "python"
+
+[[runs]]
+name = "sequential"
+system = "mas"
+[runs.settings]
+parallel_agents = false
+parallel_actions = false
+
+[[runs]]
+name = "llm_scheduler"
+system = "mas"
+[runs.settings]
+scheduler_mode = "llm"
+
+[[runs]]
+name = "without_preparation_repair"
+system = "mas"
+[runs.settings]
+auto_prepare = false
+repair_enabled = false
+
+[[runs]]
+name = "intent_analyser"
+system = "mas"
+[runs.settings]
+intent_analysis_enabled = true
+
+[[runs]]
+name = "lean"
+system = "mas"
+[runs.settings]
+checker = "lean"
+
+[[runs]]
+name = "react"
+system = "react"
+
+[[runs]]
+name = "sage"
+system = "sage"
+
+[[runs]]
+name = "dsia"
+system = "dsia"

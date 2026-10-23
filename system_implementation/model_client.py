@@ -70,7 +70,7 @@ class ChatClient:
         cfg["model"] = os.getenv(env_prefix + "_MODEL") or os.getenv("LLM_MODEL") or cfg["model"]
         cfg["api_base"] = os.getenv(env_prefix + "_API_BASE") or cfg["api_base"]
         cfg.update(settings or {})
-        unknown = set(cfg) - set(defaults)
+        unknown = set(cfg) - set(defaults) - {"think"}  # think is optional in [model].
         if unknown:
             raise ValueError(f"Unknown {env_prefix} settings: " + ", ".join(sorted(unknown)))
         for name in ("max_steps", "max_llm_calls", "max_tokens", "context_window"):
@@ -81,6 +81,8 @@ class ChatClient:
                 raise ValueError(name + " must be finite and within its allowed range.")
         if type(cfg["seed"]) is not int or ("json_mode" in cfg and type(cfg["json_mode"]) is not bool):
             raise ValueError("seed must be an integer and json_mode a boolean.")
+        if "think" in cfg and type(cfg["think"]) is not bool:
+            raise ValueError("think must be a boolean.")
         self.settings = cfg
         self.model = cfg["model"]
         self.provider, separator, self.model_id = self.model.partition(":")
@@ -106,6 +108,8 @@ class ChatClient:
                                 "num_predict": cfg["max_tokens"], "num_ctx": cfg["context_window"]}}
             if cfg.get("json_mode", False):
                 body["format"] = "json"
+            if "think" in cfg:
+                body["think"] = cfg["think"]
             if stop:
                 body["options"]["stop"] = stop
         else:

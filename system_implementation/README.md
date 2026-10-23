@@ -107,6 +107,8 @@ access the result is `inconclusive`. The audit takes a few minutes; later runs r
 
 - `model.model` must name an installed tag (`ollama list`). The default `ollama:gemma2:latest` is the
   same model as `gemma2:9b`; `ollama cp gemma2:9b gemma2:latest` adds the missing tag, or set `LLM_MODEL`.
+- Thinking models such as Gemma 4 reason before answering by default. `model.think = false` turns
+  that off for MAS, ReAct, SAGE and DS-IA (about 5x fewer tokens per call); see `experiment_config.dgx.toml`.
 - If every model call fails with `tokenize error ... Invalid API Key`, the environment variable
   `LLAMA_API_KEY` is set. Ollama's internal llama.cpp server then requires that key from Ollama
   itself. Start Ollama without it, e.g. `env -u LLAMA_API_KEY ollama serve` in Git Bash.

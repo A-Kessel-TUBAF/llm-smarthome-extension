@@ -52,6 +52,8 @@ def get_llm(role=None):
         kwargs.update(format="json", seed=cfg["seed"],
                       num_predict=cfg["max_tokens"], num_ctx=cfg["context_window"],
                       client_kwargs={"timeout": cfg["request_timeout"]})
+        if cfg.get("think") is not None:  # Thinking models only; omitted keeps the model's default.
+            kwargs["reasoning"] = cfg["think"]
         base = os.getenv("OLLAMA_BASE_URL") or cfg["api_base"]
         if base:
             kwargs["base_url"] = base

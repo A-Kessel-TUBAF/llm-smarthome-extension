@@ -9,6 +9,7 @@ context_window = 32768
 request_timeout = 60.0
 retry_delays = [2.0, 4.0]  # Additional attempts after HTTP 500; [] disables retries.
 episode_timeout = 300.0  # ReAct/SAGE/DS-IA.
+# think = false  # Ollama thinking models only (e.g. Gemma 4); omitted keeps the model's default.
 
 [mas_models]
 same_for_all = true
