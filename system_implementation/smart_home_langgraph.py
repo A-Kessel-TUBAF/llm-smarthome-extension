@@ -1082,12 +1082,12 @@ def task_planner(state):
                    search_fixture_queries=list(state["simulation_data"].get("search_results", {})),
                    rooms=state["home_config"]["rooms"], home_state=remaining_state, planner_only=planner_only)
     if state["simulation_data"].get("domain_planning_only") and not planner_only:
-        # Large native catalogues are bound by the selected domain, not repeated to the planner.
+        # Omit native methods, but keep public context/state for resolving implicit goals.
         context.update(domain_planning_only=True, home_state={})
-        context["available_agents"] = {agent: {"description": card["description"],
-            "devices": {key: {"room_id": device["room_id"], "type": device["type"]}
+        context["available_agents"] = {agent: {**{k: card[k] for k in ("description", "context") if k in card},
+            "devices": {key: {k: device[k] for k in ("room_id", "type", "state")}
                         for key, device in card["devices"].items()},
-            "services": {key: {"room_id": service["room_id"], "type": service["type"]}
+            "services": {key: {k: service[k] for k in ("room_id", "type", "state")}
                          for key, service in card["services"].items()}} for agent, card in cards.items()}
         context["room_states"] = {key: observation["value"] for key, observation in state["home_state"].items()
                                   if key.startswith("room.")}
@@ -1101,7 +1101,16 @@ def task_planner(state):
     try:
         result = _ask(('Repair ONLY the listed tasks as JSON; original_input is background. ' if repair else
                        'Plan the ENTIRE original_input as JSON. ') +
-                      'Create one task per distinct user goal; preserve order, locations, quantities and conditions. '
+                      'Resolve implicit targets and values from the public context, entity.state and explicit preferences. '
+                      'Explicit targets and unique observed referents take precedence over default devices. '
+                      'On the initial plan, if an essential choice remains unresolved after using the context '
+                      'or user instructions conflict, put a targeted clarification question in response. '
+                      'Keep all clear, independent goals in task_queue and execute them now; omit only unresolved goals '
+                      'and tasks depending on their answer. Use task_queue=[] only when no independent work is possible. '
+                      'Do not guess or reject a request merely because clarification is needed. '
+                      'Read facts available through tools instead of asking the user for them. '
+                      'This ends the current request; do not wait for a user reply or plan a follow-up dialogue. '
+                      'Otherwise create one task per distinct user goal; preserve order, locations, quantities and conditions. '
                       'Use only agent IDs and device/service IDs from available_agents. '
                       'Methods are in entity.methods or the agent card methods_by_type[entity.type]. '
                       'Each methods map pairs exact skill names with their argument definitions. '
@@ -1218,7 +1227,7 @@ def task_planner(state):
                                        "action_graph": retained, "repair_context": {}, "settings": settings,
                                        "rejected_requests": [*state["rejected_requests"], *rejected]}, goto="plan_agents")
         return Command(update={"rejected_requests": rejected, "task_queue": queue, "tasks": {t["task_id"]: t for t in queue},
-                               "final_response": result.get("response", "") if not queue else ""},
+                               "final_response": result.get("response", "")},
                        goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
     except (ValueError, KeyError, TypeError, ValidationError) as exc:
         if not repair:
@@ -2115,6 +2124,9 @@ def finish(state):
                  if state["simulation_data"].get("benchmark") == "simuhome" else
                  'Use the units supplied by the tools and state attributes. ')
         answer = _ask('Answer original_input using ONLY the supplied observed results and execution report. '
+                      'If execution_report asks for clarification, preserve that targeted question even when tasks ran. '
+                      'Report confirmed independent results, then ask about the unresolved part; do not claim it was executed '
+                      'or that the whole request is complete. End after the question, without waiting for a user reply. '
                       'For information questions state every requested value and the correct room/device. '
                       + units +
                       'Clearly distinguish observations, accepted commands and achieved physical effects. '

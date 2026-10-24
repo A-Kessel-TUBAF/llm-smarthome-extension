@@ -25,6 +25,14 @@ All paths in the TOML are relative to `system_implementation/`. Python executabl
 names on PATH are accepted. Empty Python fields use the calling interpreter.
 `--config` selects a different central TOML; older flat participant TOMLs also work.
 
+## Extended DEXA
+
+The project benchmark now uses the same `Episode` / `run_episode` boundary for
+MAS, ReAct, DS-IA and SAGE. Run `python run_experiments.py --benchmark dexa --system react`
+from `system_implementation/`. Its independent state/trace/lexical evaluator requires
+no LLM judge. See `../../benchmark/README.md`. The historical 60-case reference
+retains its direct MAS execution path. Native external-benchmark scoring is unchanged.
+
 ## HomeBench
 
 Use an existing [HomeBench](https://github.com/BITHLP/HomeBench) checkout. The

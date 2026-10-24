@@ -65,7 +65,7 @@ max_steps = 15
 max_llm_calls = 60
 
 [experiments]
-benchmark = "homebench"
+benchmark = "all"
 system = ""  # Empty selects the runs below.
 category = "all"
 limit = 0
@@ -89,7 +89,8 @@ python = ".venv-homeassistant/bin/python"
 tool_timeout = 120.0
 
 [benchmarks.dexa]
-path = "../benchmark/benchmark_data.json"
+path = "../benchmark/extension_tasks.json"
+python = ""  # Empty uses the interpreter launching run_experiments.py.
 
 [judge]
 model = "qwen3.8:27b"
@@ -159,3 +160,15 @@ name = "lean"
 system = "mas"
 [runs.settings]
 checker = "lean"
+
+[[runs]]
+name = "react"
+system = "react"
+
+[[runs]]
+name = "sage"
+system = "sage"
+
+[[runs]]
+name = "dsia"
+system = "dsia"

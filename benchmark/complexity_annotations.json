@@ -1,65 +1,2976 @@
 {
-  "description": "Annotations for computing the complexity vector C(task) of the 60 original test cases (see EXTENSION.md). Intent indices refer to required_intents followed by acceptable_intents. A string in a dependency names a helper device that is not one of the intents. 'deps' come from the listed collaboration conditions and notes; 'inferred_deps' are obvious information dependencies that the original case does not list. DRAFT: to be reviewed.",
+  "description": "Authoritative user-goal and dependency annotations. implementation_step marks necessary technical steps excluded from intent counts. Active unresolved goals remain in the graph; infeasible conditional branches do not.",
   "cases": {
-    "simple_01": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_02": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_03": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_04": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_05": {"deps": [[1, 2]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_06": {"deps": [[1, 0]], "temporal": ["for 1 hour"], "spatial": [], "conflicts": []},
-    "simple_07": {"deps": [], "temporal": ["20 minutes"], "spatial": [], "conflicts": []},
-    "simple_08": {"deps": [], "temporal": [], "spatial": ["nearby"], "conflicts": []},
-    "simple_09": {"deps": [], "temporal": [], "spatial": ["bedroom"], "conflicts": []},
-    "simple_10": {"deps": [], "temporal": ["tomorrow at 10am"], "spatial": [], "conflicts": []},
-    "simple_11": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_12": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_13": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_14": {"deps": [["clock", 0]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_15": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_16": {"deps": [], "temporal": [], "spatial": ["bedroom", "living room"], "conflicts": []},
-    "simple_17": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_18": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_19": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "simple_20": {"deps": [], "temporal": [], "spatial": ["living room"], "conflicts": []},
-    "moderate_01": {"deps": [], "temporal": ["tomorrow"], "spatial": [], "conflicts": []},
-    "moderate_02": {"deps": [["search", 1]], "temporal": ["for 45 minutes"], "spatial": [], "conflicts": []},
-    "moderate_03": {"deps": [[1, 0], [0, 2]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_04": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_05": {"deps": [[0, 1]], "temporal": ["tomorrow"], "spatial": [], "conflicts": []},
-    "moderate_06": {"deps": [["search", 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_07": {"deps": [], "temporal": ["tomorrow 7 AM", "tonight", "10-minute"], "spatial": [], "conflicts": []},
-    "moderate_08": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_09": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_10": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_11": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_12": {"deps": [[0, 1], [2, 1]], "temporal": ["then", "tomorrow"], "spatial": [], "conflicts": []},
-    "moderate_13": {"deps": [["search", 1]], "temporal": ["one-hour"], "spatial": ["living room"], "conflicts": []},
-    "moderate_14": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_15": {"deps": [["search", 0], ["search", 1]], "temporal": ["then"], "spatial": [], "conflicts": [[0, 1]]},
-    "moderate_16": {"deps": [[1, 0]], "temporal": ["before the next appointment"], "spatial": [], "conflicts": []},
-    "moderate_17": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_18": {"deps": [[1, 0]], "temporal": [], "spatial": [], "conflicts": []},
-    "moderate_19": {"deps": [["search", 0]], "temporal": [], "spatial": ["living room"], "conflicts": [[1, 2]]},
-    "moderate_20": {"deps": [], "temporal": ["an hour from now"], "spatial": [], "conflicts": []},
-    "complex_01": {"deps": [[0, 1]], "temporal": ["15-minute"], "spatial": [], "conflicts": []},
-    "complex_02": {"deps": [[0, 1], [0, 2], [1, 2]], "temporal": ["this Friday night", "first ... then"], "spatial": [], "conflicts": []},
-    "complex_03": {"deps": [], "temporal": ["7 AM tomorrow"], "spatial": ["all the lights"], "conflicts": []},
-    "complex_04": {"deps": [[2, 3]], "temporal": ["today's first meeting"], "spatial": ["bedroom"], "conflicts": []},
-    "complex_05": {"deps": [], "inferred_deps": [[0, 2]], "temporal": ["1 hour"], "spatial": [], "conflicts": []},
-    "complex_06": {"deps": [], "temporal": ["every 4 hours", "tomorrow"], "spatial": [], "conflicts": []},
-    "complex_07": {"deps": [], "temporal": ["5:30am", "5 min", "meal times"], "spatial": [], "conflicts": []},
-    "complex_08": {"deps": [], "inferred_deps": [[1, 2]], "temporal": ["tonight"], "spatial": [], "conflicts": []},
-    "complex_09": {"deps": [], "temporal": [], "spatial": [], "conflicts": []},
-    "complex_10": {"deps": [[0, 1]], "temporal": ["for the weekend", "then"], "spatial": [], "conflicts": []},
-    "complex_11": {"deps": [], "temporal": ["tonight"], "spatial": [], "conflicts": []},
-    "complex_12": {"deps": [["search", 2]], "temporal": ["tonight", "then"], "spatial": [], "conflicts": []},
-    "complex_13": {"deps": [[2, 3]], "inferred_deps": [[0, 1]], "temporal": ["tomorrow", "2pm"], "spatial": [], "conflicts": []},
-    "complex_14": {"deps": [[0, 1], [1, 2]], "temporal": ["tomorrow"], "spatial": [], "conflicts": []},
-    "complex_15": {"deps": [[0, 1], [1, 2]], "temporal": [], "spatial": [], "conflicts": []},
-    "complex_16": {"deps": [[0, 1]], "temporal": ["tomorrow at 5 PM"], "spatial": [], "conflicts": []},
-    "complex_17": {"deps": [["search", 0]], "temporal": ["for an hour", "for two hours", "then", "before I go to bed", "tomorrow"], "spatial": ["living room"], "conflicts": []},
-    "complex_18": {"deps": [], "temporal": ["in ten minutes"], "spatial": ["kitchen"], "conflicts": []},
-    "complex_19": {"deps": [[0, 1]], "temporal": [], "spatial": [], "conflicts": []},
-    "complex_20": {"deps": [[1, 2], ["clock", 0]], "temporal": ["gradually starting at 10pm"], "spatial": [], "conflicts": []}
+    "simple_01": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_02": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_03": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_04": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_05": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which preparations would you like for studying: lighting, temperature, music, or something else?"
+    },
+    "simple_06": {
+      "deps": [],
+      "temporal": [
+        "for 1 hour"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; the requested one-hour duration fixes the stop schedule."
+    },
+    "simple_07": {
+      "deps": [],
+      "temporal": [
+        "20 minutes"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_08": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "nearby"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Nearby uses the public search location Berlin and the simulated local place result."
+    },
+    "simple_09": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public bedroom setpoint 21 C plus the saved relative increment of 2 C uniquely gives 23 C."
+    },
+    "simple_10": {
+      "deps": [],
+      "temporal": [
+        "tomorrow at 10am"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_11": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; the requested series and season are explicit."
+    },
+    "simple_12": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public quiet-volume preference gives 15%; the default audio device resolves the unnamed player. Classical is explicit."
+    },
+    "simple_14": {
+      "deps": [],
+      "temporal": [
+        "next event"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_15": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Would you like cooling, help with lunch, or both?"
+    },
+    "simple_16": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom",
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public dim preference fixes bedroom brightness at 20%; both target rooms and the living-room off command are explicit."
+    },
+    "simple_17": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed screen; calendar content is obtained through tools."
+    },
+    "simple_18": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "simple_19": {
+      "deps": [],
+      "temporal": [
+        "saved wake-up time"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which sleep preparations would you like in addition to your wake-up alarm?"
+    },
+    "simple_20": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which lighting, temperature or music would you like for the cozy living room?"
+    },
+    "moderate_01": {
+      "deps": [],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which relaxation settings would you like: lighting, temperature or music?"
+    },
+    "moderate_02": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public bright-light preference gives 90%; default local devices resolve the light/player. No inferred timer or thermostat action."
+    },
+    "moderate_03": {
+      "deps": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; recipe choice is grounded in observed inventory."
+    },
+    "moderate_04": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "moderate_05": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "rain forecast",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the otherwise unspecified reminder time at tomorrow 07:00; weather determines the branch."
+    },
+    "moderate_06": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; expiry dates are obtained from inventory."
+    },
+    "moderate_07": {
+      "deps": [],
+      "temporal": [
+        "tomorrow 7 AM",
+        "tonight",
+        "10-minute"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public tonight=20:00 and default_event_start resolve Call Mom; other durations and the wake-up time are explicit."
+    },
+    "moderate_08": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public current room, bright-light preference (90%) and relative warming increment (21+2 C) resolve the implicit request."
+    },
+    "moderate_09": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which environmental changes would help: temperature, lighting or music?"
+    },
+    "moderate_10": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which entertainment and cozy settings would you prefer?"
+    },
+    "moderate_11": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Only audio_living_room is audibly playing in the public state; silence it and preserve all thermostat values."
+    },
+    "moderate_12": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "temporal": [
+        "then",
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [
+        [
+          1,
+          3
+        ]
+      ],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed screen; inventory and calendar observations supply the two ordered contents."
+    },
+    "moderate_13": {
+      "deps": [
+        [
+          "search",
+          1
+        ]
+      ],
+      "temporal": [
+        "one-hour"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; living-room light and one-hour timer are explicit."
+    },
+    "moderate_14": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. What preparation would you like for the upcoming appointments?"
+    },
+    "moderate_16": {
+      "deps": [
+        [
+          1,
+          0
+        ]
+      ],
+      "temporal": [
+        "before the next appointment"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The next appointment is obtained from the calendar; the public reminder lead of 60 minutes fixes the alarm."
+    },
+    "moderate_17": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "moderate_18": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The saved default pasta recipe is Italian pasta; its ingredients and the fridge observation determine what is missing."
+    },
+    "moderate_19": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. What additional ambience settings would you like besides the movie and lights off?"
+    },
+    "moderate_20": {
+      "deps": [],
+      "temporal": [
+        "an hour from now"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public bright_brightness_pct=90 and default light/audio devices resolve the omitted settings and targets."
+    },
+    "complex_01": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "15-minute"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; recipe ingredients come from the fridge and the 15-minute timer is explicit."
+    },
+    "complex_02": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "this Friday night",
+        "first ... then"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "Friday evening is free",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "complex_03": {
+      "deps": [],
+      "temporal": [
+        "7 AM tomorrow"
+      ],
+      "spatial": [
+        "all the lights"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim_brightness_pct=20 and the default audio device resolve the bedtime settings; all lights and tomorrow 07:00 are explicit."
+    },
+    "complex_04": {
+      "deps": [
+        [
+          2,
+          3
+        ]
+      ],
+      "temporal": [
+        "today's first meeting"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [
+        {
+          "source": 2,
+          "targets": [
+            3
+          ],
+          "expression": "rain forecast",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the otherwise unspecified umbrella reminder at today 09:00."
+    },
+    "complex_05": {
+      "deps": [
+        [
+          0,
+          2
+        ]
+      ],
+      "temporal": [
+        "1 hour"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed screen; lasagna and the one-hour timer are explicit."
+    },
+    "complex_06": {
+      "deps": [],
+      "temporal": [
+        "every 4 hours",
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which lighting or temperature settings would make your home comfortable?"
+    },
+    "complex_07": {
+      "deps": [],
+      "temporal": [
+        "5:30am",
+        "5 min",
+        "meal times"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public default display/audio devices resolve the unnamed targets; the catalogue supplies the meal times."
+    },
+    "complex_09": {
+      "deps": [],
+      "temporal": [
+        "next deadline"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which lighting or temperature settings would improve your working environment?"
+    },
+    "complex_10": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "for the weekend",
+        "then"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "complex_11": {
+      "deps": [],
+      "temporal": [
+        "tonight"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which lighting, music or temperature would you prefer for relaxing?"
+    },
+    "complex_12": {
+      "deps": [],
+      "temporal": [
+        "tonight",
+        "then"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public study scene defines optimal work lighting (90%) and temperature (20 C); Focus and the deadline query are explicit."
+    },
+    "complex_13": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          "search",
+          3
+        ]
+      ],
+      "temporal": [
+        "tomorrow",
+        "2pm"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public reminder_channel=clock resolves the reminder service; the unqualified display uses the public default."
+    },
+    "complex_14": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "tomorrow has free time",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which free time slot would you prefer for the salon appointment?"
+    },
+    "complex_15": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which ambience settings and music would you prefer for Thanksgiving dinner?"
+    },
+    "complex_16": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow at 5 PM"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "milk available; buy cereal only",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "complex_17": {
+      "deps": [
+        [
+          "search",
+          0
+        ]
+      ],
+      "temporal": [
+        "for an hour",
+        "for two hours",
+        "then",
+        "before I go to bed",
+        "tomorrow"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public default display/thermostat routing resolves the room; initial thermostat state supplies the value restored after two hours."
+    },
+    "complex_18": {
+      "deps": [],
+      "temporal": [
+        "in ten minutes"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": "initial_state",
+          "targets": [
+            1
+          ],
+          "expression": "kitchen light on",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public clock tools support a relative-duration reminder; the observed kitchen light determines whether it must be switched off."
+    },
+    "complex_19": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The retrieved outdoor temperature plus the public relative increment of 2 C fixes the indoor setpoint."
+    },
+    "complex_20": {
+      "deps": [],
+      "temporal": [
+        "gradually starting at 10pm"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public gradual-dimming steps and interval, quiet volume and default room resolve the bedtime settings."
+    },
+    "ext_dep_01": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "cooking time in the recipe"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; retrieved inventory, recipe and cooking duration determine the remaining results."
+    },
+    "ext_dep_02": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow",
+        "one hour before it"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_dep_03": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "today",
+        "at that time"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim_brightness_pct=20 resolves how far to dim; the tool-observed sunset fixes when."
+    },
+    "ext_dep_04": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "temporal": [
+        "tomorrow",
+        "tonight"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "forecast temperature below 15 C",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "Public cold_below_c=15, tonight=20:00 and default_event_start=tomorrow 07:00 resolve the condition and omitted times."
+    },
+    "ext_dep_05": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "at 7 pm"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_dep_06": {
+      "deps": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "this evening"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [
+        {
+          "source": [
+            0,
+            1
+          ],
+          "targets": [
+            2,
+            3
+          ],
+          "expression": "user home this evening and rain forecast",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "Public relative_temperature_delta_c=2 gives 23 C from 21 C; the default display resolves the TV. Calendar and weather observations determine the condition."
+    },
+    "ext_dep_07": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "30-minute",
+        "when it ends"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public normal_brightness_pct=60 and default light/display/audio targets resolve the reset and unnamed devices; the video duration fixes the subsequent time."
+    },
+    "ext_dep_08": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        3
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "eggs and flour available",
+          "value": false
+        },
+        {
+          "source": 0,
+          "targets": [
+            3
+          ],
+          "expression": "eggs or flour missing",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the unspecified shopping-reminder time at tomorrow 07:00; inventory determines the active branch."
+    },
+    "ext_amb_01": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "in here"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public current room and saved dim setting resolve the lamp and brightness; its display is off."
+    },
+    "ext_amb_02": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Would you like sleep sounds, changes to lighting or temperature, or sleep tips?"
+    },
+    "ext_amb_03": {
+      "deps": [],
+      "temporal": [
+        "for the morning"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which preparations should I make for the morning, and for what time?"
+    },
+    "ext_amb_04": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Would you like an activity, food or entertainment for the kids?"
+    },
+    "ext_amb_05": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which device or setting should I turn down?"
+    },
+    "ext_amb_06": {
+      "deps": [],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which event tomorrow should the reminder refer to?"
+    },
+    "ext_amb_07": {
+      "deps": [],
+      "temporal": [
+        "today"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which preparations would you like for working from home?"
+    },
+    "ext_amb_08": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which lighting, music, temperature or dinner plans would you like for your date night?"
+    },
+    "ext_scale_01": {
+      "deps": [
+        [
+          3,
+          5
+        ],
+        [
+          4,
+          5
+        ]
+      ],
+      "temporal": [
+        "today",
+        "5-minute"
+      ],
+      "spatial": [
+        "bedroom",
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public default display/audio targets resolve the unnamed TV/player. Calendar and weather observations supply the facts that must remain together on the display."
+    },
+    "ext_scale_02": {
+      "deps": [],
+      "temporal": [
+        "for the weekend",
+        "Sunday at 6 pm",
+        "before Sunday",
+        "Friday at 7 am"
+      ],
+      "spatial": [
+        "all the lights",
+        "every room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_scale_03": {
+      "deps": [],
+      "temporal": [
+        "in an hour",
+        "in 45 minutes"
+      ],
+      "spatial": [
+        "living room",
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Which party colors would you like for the living room light?"
+    },
+    "ext_scale_04": {
+      "deps": [],
+      "temporal": [
+        "Friday at 6 pm"
+      ],
+      "spatial": [
+        "bedroom",
+        "guest room",
+        "kids' room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_scale_05": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          4
+        ]
+      ],
+      "temporal": [
+        "for the week",
+        "Saturday at 10 am"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; five ingredient-grounded recipe choices are permitted."
+    },
+    "ext_scale_06": {
+      "deps": [
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ]
+      ],
+      "temporal": [
+        "2-hour"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim_brightness_pct=20 and the default display resolve the lighting and TV; 22 C and two hours are explicit."
+    },
+    "ext_scale_07": {
+      "deps": [
+        [
+          "calendar",
+          5
+        ]
+      ],
+      "temporal": [
+        "this afternoon",
+        "50-minute",
+        "the afternoon",
+        "today"
+      ],
+      "spatial": [
+        "study"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public bright_brightness_pct=90, afternoon=[13:00,17:00] and default audio/display targets resolve the omitted settings."
+    },
+    "ext_scale_08": {
+      "deps": [
+        [
+          4,
+          5
+        ]
+      ],
+      "temporal": [
+        "3-hour",
+        "at 6 pm"
+      ],
+      "spatial": [
+        "living room",
+        "dining room",
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public warm_white_k=2700 resolves the requested color temperature; the named rooms, roast turkey, three hours and 18:00 are explicit."
+    },
+    "ext_conc_01": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [
+        [
+          0,
+          1
+        ]
+      ],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Should the bedroom light be off or set for reading?"
+    },
+    "ext_conc_02": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [
+        [
+          0,
+          1
+        ]
+      ],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Should the living room be 18 or 23 degrees?"
+    },
+    "ext_conc_03": {
+      "deps": [
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [
+        [
+          0,
+          2
+        ]
+      ],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        1,
+        0,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Should I show the football match or your calendar first?"
+    },
+    "ext_conc_04": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom",
+        "kitchen",
+        "bathroom",
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim/bright preferences give 20%/90%, and the relative warming increment gives bathroom 23 C from 21 C."
+    },
+    "ext_conc_05": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [
+        [
+          0,
+          1
+        ]
+      ],
+      "order": [],
+      "ambiguity": 2,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The unresolved goals require a focused question; clear independent goals remain executable. Should I play Workout or Meditation on the living room player, or in which order?"
+    },
+    "ext_conc_06": {
+      "deps": [],
+      "temporal": [
+        "10-minute",
+        "25-minute",
+        "6 am tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_conc_07": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "meanwhile"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; calendar, weather and inventory observations supply the requested information."
+    },
+    "ext_conc_08": {
+      "deps": [],
+      "temporal": [
+        "all at once"
+      ],
+      "spatial": [
+        "all the lights",
+        "every room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; all lights, every room and 21 C are explicit."
+    },
+    "ext_fail_01": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim_brightness_pct=20 and the default audio device resolve the omitted brightness and player; fault handling is independent of ambiguity."
+    },
+    "ext_fail_02": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "1-hour"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; lasagna and the one-hour timer are explicit."
+    },
+    "ext_fail_03": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_fail_04": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow",
+        "one hour before it"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_fail_05": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_fail_06": {
+      "deps": [
+        [
+          "search",
+          1
+        ]
+      ],
+      "temporal": [
+        "temperature before movie",
+        "movie before dimming"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Public dim_brightness_pct=20 and the default display resolve the dimmed light level and unnamed TV; order and 22 C are explicit."
+    },
+    "ext_fail_07": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow morning"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "rain forecast",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public wake_up/default_event_start fixes tomorrow morning at 07:00; the weather observation determines whether to add the reminder."
+    },
+    "robust_01_none": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; bedroom brightness 20% and temperature 20 C are explicit."
+    },
+    "robust_01_transient": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; bedroom brightness 20% and temperature 20 C are explicit."
+    },
+    "robust_01_unavailable": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default audio device resolves the unnamed player; bedroom brightness 20% and temperature 20 C are explicit."
+    },
+    "robust_02_none": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "10-minute timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; recipe content comes from observed inventory and the 10-minute timer is explicit."
+    },
+    "robust_02_transient": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "10-minute timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; recipe content comes from observed inventory and the 10-minute timer is explicit."
+    },
+    "robust_02_unavailable": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "10-minute timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; recipe content comes from observed inventory and the 10-minute timer is explicit."
+    },
+    "robust_03_none": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "1-hour timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; lasagna and the one-hour timer are explicit."
+    },
+    "robust_03_transient": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "1-hour timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; lasagna and the one-hour timer are explicit."
+    },
+    "robust_03_unavailable": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "1-hour timer"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The public default display resolves the unnamed TV; lasagna and the one-hour timer are explicit."
+    },
+    "robust_04_none": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow's first meeting",
+        "one hour before it"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_04_transient": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow's first meeting",
+        "one hour before it"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_04_unavailable": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow's first meeting",
+        "one hour before it"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_05_none": {
+      "deps": [],
+      "temporal": [
+        "tomorrow at 10 am",
+        "10-minute timer"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_05_transient": {
+      "deps": [],
+      "temporal": [
+        "tomorrow at 10 am",
+        "10-minute timer"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_05_unavailable": {
+      "deps": [],
+      "temporal": [
+        "tomorrow at 10 am",
+        "10-minute timer"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "robust_power_cut": {
+      "deps": [],
+      "temporal": [
+        "10-minute"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "ext_amb_09": {
+      "deps": [],
+      "order": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "Only audio_bedroom is audibly playing in the public state. Muting, stopping or powering off that player are equivalent valid outcomes."
+    },
+    "moderate_05_dry": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "rain forecast",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the otherwise unspecified reminder time at tomorrow 07:00; weather determines the branch."
+    },
+    "complex_04_dry": {
+      "deps": [
+        [
+          2,
+          3
+        ]
+      ],
+      "temporal": [
+        "today's first meeting"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 2,
+          "targets": [
+            3
+          ],
+          "expression": "rain forecast",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the otherwise unspecified umbrella reminder at today 09:00."
+    },
+    "complex_02_busy": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "this Friday night",
+        "first ... then"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "Friday evening is free",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "complex_14_busy": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "tomorrow has free time",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "The observed calendar has no free time, so no appointment choice is reached."
+    },
+    "complex_16_no_milk": {
+      "deps": [
+        [
+          0,
+          1
+        ]
+      ],
+      "temporal": [
+        "tomorrow at 5 PM"
+      ],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 0,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "milk available; buy cereal only",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Actions and numerical requirements are explicit; remaining information is obtained through ordinary tools. Equivalent content selections are allowed."
+    },
+    "complex_18_light_off": {
+      "deps": [],
+      "temporal": [
+        "in ten minutes"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [
+        {
+          "source": "initial_state",
+          "targets": [
+            1
+          ],
+          "expression": "kitchen light on",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "The public clock tools support a relative-duration reminder; the observed kitchen light determines whether it must be switched off."
+    },
+    "ext_dep_04_warm": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "temporal": [
+        "tomorrow",
+        "tonight"
+      ],
+      "spatial": [
+        "bedroom"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1
+          ],
+          "expression": "forecast temperature below 15 C",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Public cold_below_c=15, tonight=20:00 and default_event_start=tomorrow 07:00 resolve the condition and omitted times."
+    },
+    "ext_dep_06_home_dry": {
+      "deps": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "this evening"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": [
+            0,
+            1
+          ],
+          "targets": [
+            2,
+            3
+          ],
+          "expression": "user home this evening and rain forecast",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Public relative_temperature_delta_c=2 gives 23 C from 21 C; the default display resolves the TV. Calendar and weather observations determine the condition."
+    },
+    "ext_dep_06_away_rain": {
+      "deps": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "this evening"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": [
+            0,
+            1
+          ],
+          "targets": [
+            2,
+            3
+          ],
+          "expression": "user home this evening and rain forecast",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Public relative_temperature_delta_c=2 gives 23 C from 21 C; the default display resolves the TV. Calendar and weather observations determine the condition."
+    },
+    "ext_dep_06_away_dry": {
+      "deps": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "temporal": [
+        "this evening"
+      ],
+      "spatial": [
+        "living room"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1
+      ],
+      "conditions": [
+        {
+          "source": [
+            0,
+            1
+          ],
+          "targets": [
+            2,
+            3
+          ],
+          "expression": "user home this evening and rain forecast",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "Public relative_temperature_delta_c=2 gives 23 C from 21 C; the default display resolves the TV. Calendar and weather observations determine the condition."
+    },
+    "ext_dep_08_available": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        1,
+        2
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "eggs and flour available",
+          "value": true
+        },
+        {
+          "source": 0,
+          "targets": [
+            3
+          ],
+          "expression": "eggs or flour missing",
+          "value": false
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the unspecified shopping-reminder time at tomorrow 07:00; inventory determines the active branch."
+    },
+    "ext_dep_08_no_eggs": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        3
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "eggs and flour available",
+          "value": false
+        },
+        {
+          "source": 0,
+          "targets": [
+            3
+          ],
+          "expression": "eggs or flour missing",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the unspecified shopping-reminder time at tomorrow 07:00; inventory determines the active branch."
+    },
+    "ext_dep_08_neither": {
+      "deps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "temporal": [
+        "tomorrow"
+      ],
+      "spatial": [
+        "kitchen"
+      ],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0,
+        3
+      ],
+      "conditions": [
+        {
+          "source": 0,
+          "targets": [
+            1,
+            2
+          ],
+          "expression": "eggs and flour available",
+          "value": false
+        },
+        {
+          "source": 0,
+          "targets": [
+            3
+          ],
+          "expression": "eggs or flour missing",
+          "value": true
+        }
+      ],
+      "ambiguity_reason": "The public default_event_start fixes the unspecified shopping-reminder time at tomorrow 07:00; inventory determines the active branch."
+    },
+    "moderate_18_complete": {
+      "deps": [],
+      "temporal": [],
+      "spatial": [],
+      "conflicts": [],
+      "order": [],
+      "ambiguity": 1,
+      "active_intents": [
+        0
+      ],
+      "conditions": [],
+      "ambiguity_reason": "The saved default pasta recipe is Italian pasta; its ingredients and the fridge observation determine what is missing."
+    }
   }
 }

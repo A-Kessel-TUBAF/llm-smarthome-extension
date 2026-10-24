@@ -1,263 +1,204 @@
-"""Run DEXA benchmark cases, including extension scenarios and measurements."""
+"""Extended DEXA: neutral episodes, fresh environments and automatic evaluation.
+The untouched 60-case reference can still be run with --dataset original.
+"""
+from collections import Counter
 from copy import deepcopy
-from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
-from threading import RLock
+import sys
 import time
 
-from configuration import config_path as configured_path, load_config
+from configuration import activate_config, config_path as configured_path, load_config
+from external_benchmarks.common import (Episode, case_file, create_system, prepare_output,
+    summarize_calls, system_report, write_json)
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent))
+from benchmark.complexity import complexity
+from benchmark.environment import Session
+from benchmark.evaluation import evaluate
 
-BENCHMARK = Path(__file__).resolve().parent.parent / "benchmark"
-DIMENSIONS = ("dependency_structure", "ambiguity", "scale", "concurrency", "failure_recovery")
-AGENTS = {"search": "search_engine", "display": "tv_display", "audio": "audio_system",
-          "light": "lighting", "clock": "clock", "calendar": "calendar",
-          "thermostat": "thermostat", "fridge": "fridge"}
-NOW = "2026-10-22T08:00:00+00:00"
-EVENTS = [{"event_id": "fixture-dentist", "title": "Dentist appointment",
-           "start": "2026-10-23T10:00:00+00:00", "end": "2026-10-23T11:00:00+00:00", "location": "Dentist"},
-          {"event_id": "fixture-meeting", "title": "Team meeting",
-           "start": "2026-10-23T13:00:00+00:00", "end": "2026-10-23T14:00:00+00:00", "location": "Office"}]
-NOTES = {
-    "ext_dep_03": "Device-action scheduling is not supported by the default house.",
-    "ext_dep_04": "Timed thermostat changes are not supported by the default house.",
-    "ext_dep_05": "The default fridge inventory has no expiry dates.",
-    "ext_dep_07": "Video-completion triggers and delayed device actions are not supported.",
-    "ext_dep_08": "There is no kitchen display; the flour-missing branch can still be evaluated.",
-    "ext_scale_01": "The kitchen has no thermostat.",
-    "ext_scale_02": "The default fridge inventory has no expiry dates.",
-    "ext_scale_03": "RGB party colors and kitchen dimming are not supported.",
-    "ext_scale_04": "There are no guest or kids rooms; brightness 50% is not supported on every light.",
-    "ext_scale_07": "There is no study room or to-do service.",
-    "ext_scale_08": "There is no dining room or kitchen display; several lights have no color control.",
-    "ext_conc_04": "Kitchen dimming and bathroom heating are not supported.",
-    "ext_fail_08": "Calendar contracts allow overlapping events; detecting the injected clash is a measured limitation.",
-}
+DIMENSIONS = ('dependency_structure','ambiguity','scale','concurrency','failure_recovery')
+FAILURES = ('none','transient','unavailable','no_effect','state_changed')
 
 
-def load_cases(dataset, original_path):
-    if dataset not in {"original", "extension", "all"}:
-        raise ValueError("dataset must be original, extension or all.")
-    spec = importlib.util.spec_from_file_location("_dexa_complexity", BENCHMARK / "complexity.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    annotations = json.loads((BENCHMARK / "complexity_annotations.json").read_text(encoding="utf-8"))["cases"]
-    paths = ([Path(original_path)] if dataset != "extension" else []) + (
-        [BENCHMARK / "extension_tasks.json"] if dataset != "original" else [])
-    cases = []
-    for path in paths:
-        for raw in json.loads(path.read_text(encoding="utf-8"))["test_cases"]:
-            case = deepcopy(raw)
-            ann = case.get("annotation", annotations.get(case["id"]))
-            if ann is not None:
-                case["annotation"] = deepcopy(ann)
-            case["complexity"] = module.complexity(case, ann) if ann is not None else None
-            cases.append(case)
-    ids = [c["id"] for c in cases]
-    if len(set(ids)) != len(ids):
-        raise ValueError("Duplicate DEXA case IDs.")
-    return cases, paths
+def load_cases(dataset='extended', original_path=None, *, suite='all', failure_mode=None, dimension=None):
+    if dataset not in {'extended','extension','all','original'}:
+        raise ValueError('Unknown DEXA dataset.')
+    path = Path(original_path or ROOT.parent/'benchmark'/('benchmark_data.json' if dataset=='original' else 'extension_tasks.json'))
+    cases = json.loads(path.read_text(encoding='utf-8'))['test_cases']
+    if dataset=='original':
+        if suite!='all' or failure_mode or dimension:
+            raise ValueError('Suite, failure and dimension filters belong to the extended edition.')
+        return cases, [path]
+    annotation_path=path.with_name('complexity_annotations.json')
+    annotations=json.loads(annotation_path.read_text(encoding='utf-8'))['cases']
+    for c in cases:
+        if 'reference' not in c:
+            raise ValueError('Extended DEXA needs reference predicates; use --dataset original for historical inputs.')
+        c['annotation']=annotations[c['id']]
+    cases = [c for c in cases if (suite=='all' or c['suite']==suite)
+        and (not failure_mode or c.get('injected_failure',{}).get('mode','none')==failure_mode)
+        and (not dimension or c.get('dimension')==dimension)]
+    for c in cases:
+        c['complexity'] = complexity(c)
+    return cases, [path, annotation_path]
 
 
-class Scenario:
-    """Fixed extension context; expected answers and annotations never enter prompts."""
-    def __init__(self, case, system):
-        self.case, self.system = case, system
-        self.fault = case.get("injected_failure")
-        if self.fault and self.fault["mode"] not in {"unavailable", "no_effect", "state_changed"}:
-            raise ValueError("Unknown injected-failure mode.")
-        self.tool_calls, self.injections, self.batches = [], [], []
-        self.pending, self.changed = {}, False
-        self.lock = RLock()
-
-    def snapshot(self):
-        with self.lock:
-            values, self.pending = self.pending, {}
-            if values:
-                self.record_injection("calendar", "external_update", "calendar_personal", None)
-            return NOW, values
-
-    def record_injection(self, agent, skill, target, action_id):
-        with self.lock:
-            self.injections.append({"mode": self.fault["mode"], "agent_id": agent, "skill_id": skill,
-                "target_id": target, "action_id": action_id, "at": datetime.now(timezone.utc).isoformat()})
-
-    def setup(self):
-        observations = {"service.calendar_personal.events": self.system.make_observation(deepcopy(EVENTS), source="benchmark:fixture", observed_at=NOW)}
-        if self.case["id"] == "ext_fail_05":
-            observations["device.audio_lr.power"] = self.system.make_observation(True, source="benchmark:fixture", observed_at=NOW)
-        bindings = {key: self.wrap(key, tool) for key, tool in self.system.TOOLS.items()}
-        return {"observations": observations, "environment": self, "tool_bindings": bindings,
-                "simulation_data": {"now": NOW, "reference_time": NOW, "user_location": "living_room"}}
-
-    def wrap(self, key, tool):
-        def invoke(skill, args, simulator, now, simulation):
-            started = time.perf_counter()
-            target = args.get("device_id", args.get("service_id"))
-            entry = {"agent_id": key[0], "skill_id": skill, "target_id": target,
-                     "action_id": simulation.get("_action_id"), "arguments": deepcopy(args),
-                     "started_at": datetime.now(timezone.utc).isoformat(), "status": "returned"}
-            try:
-                mode = self.fault["mode"] if self.fault and AGENTS[self.fault["device_type"]] == key[0] else None
-                if mode == "unavailable":
-                    self.record_injection(key[0], skill, target, entry["action_id"])
-                    raise RuntimeError("Injected benchmark failure: agent unavailable.")
-                if mode == "no_effect" and skill == "play":
-                    self.record_injection(key[0], skill, target, entry["action_id"])
-                    shadow = self.system.Simulator(simulator.snapshot(), fixed_time=now)
-                    return tool(skill, args, shadow, now, simulation)
-                return tool(skill, args, simulator, now, simulation)
-            except Exception as exc:
-                entry.update(status="error", error=f"{type(exc).__name__}: {exc}")
-                raise
-            finally:
-                entry.update(ended_at=datetime.now(timezone.utc).isoformat(), latency_s=time.perf_counter() - started)
-                with self.lock:
-                    self.tool_calls.append(entry)
-        return invoke
-
-    def observe(self, event):
-        for node, update in event.items():
-            if not isinstance(update, dict):
-                continue
-            if node == "scheduler":
-                actions = update.get("action_graph", {})
-                active = update.get("active_actions", [])
-                running = [i for i in active if actions.get(i, {}).get("status") == "running"]
-                rejected = [r for r in update.get("task_results", []) if (r.get("failure") or {}).get("source") == "lean"]
-                if running or rejected:
-                    self.batches.append({"action_ids": running, "lean_rejected": bool(rejected)})
-            elif node == "validate_action" and update.get("pending_actions"):
-                self.batches.append({"action_ids": [update["pending_actions"][0]["task_id"]], "lean_rejected": False})
-            if self.fault and self.fault["mode"] == "state_changed" and not self.changed:
-                actions = list(update.get("action_graph", {}).values()) + update.get("pending_actions", [])
-                if any(a.get("skill_id") == "create_event" and a.get("status", "pending") == "pending" for a in actions):
-                    self.changed = True
-                    self.pending["service.calendar_personal.events"] = deepcopy(EVENTS) + [{
-                        "event_id": "injected-meeting", "title": "Externally added meeting",
-                        "start": "2026-10-22T08:15:00+00:00", "end": "2026-10-22T08:45:00+00:00", "location": "Office"}]
-
-    def report(self, episode, settings):
-        lean = settings.get("checker") == "lean"
-        accepted = sum(bool(b["action_ids"]) for b in self.batches)
-        rejected = sum(b["lean_rejected"] for b in self.batches)
-        calls = episode.get("llm_calls", [])
-        first = min((i["at"] for i in self.injections), default=None)
-        return {"tool_calls": sorted(self.tool_calls, key=lambda c: c["started_at"]),
-            "injections": self.injections, "injection_status": "triggered" if first else "not_triggered" if self.fault else "not_requested",
-            "metrics": {"execution_rounds": accepted, "max_batch_size": max((len(b["action_ids"]) for b in self.batches), default=0),
-                "lean_batches_accepted": accepted if lean else None, "lean_batches_rejected": rejected if lean else None,
-                "lean_acceptance_rate": accepted / (accepted + rejected) if lean and accepted + rejected else None,
-                "llm_calls_after_injection": sum(c.get("started_at", "") >= first for c in calls) if first else None},
-            "semantic_metrics": {"intent_recall": None, "dependency_correctness": None, "conflict_handling": None,
-                "recovery_locality": None, "recovery_correctness": None, "failure_reported_to_user": None},
-            "evaluation_note": "Semantic scores require reviewing intent-to-task matches; tool return, task status and injection are not user-goal success.",
-            "compatibility_notes": [NOTES[self.case["id"]]] if self.case["id"] in NOTES else []}
+def usage(report):
+    known = report.get('telemetry_available', 'llm_calls' in report)
+    fields = ('llm_calls','llm_attempts','llm_retries','llm_call_errors','input_tokens','output_tokens','calls_with_usage')
+    if not known:
+        return {'available':False, **dict.fromkeys(fields)}
+    calls = report.get('llm_calls') or []
+    result = summarize_calls(calls)
+    for token_field in ('input_tokens','output_tokens'):
+        if any(c.get(token_field) is None for c in calls): result[token_field]=None
+    return {'available':True, **{k:result[k] for k in fields},
+            'tokens_complete':result['calls_with_usage']==len(calls)}
 
 
-def grouped_summary(rows, field):
-    groups = {}
-    for value in sorted({r.get(field, "original") for r in rows}):
-        selected = [r for r in rows if r.get(field, "original") == value]
-        groups[value] = {"cases": len(selected), "errors": sum(r["error"] is not None for r in selected),
-            "mean_latency_s": sum(r["latency_s"] for r in selected) / len(selected),
-            "injections_triggered": sum(r.get("extension", {}).get("injection_status") == "triggered" for r in selected)}
-    return groups
+def summarize(rows):
+    evaluated = [r for r in rows if r['evaluation']['score'] in (0,1)]
+    successes = sum(r['evaluation']['score']==1 for r in evaluated)
+    result = {'cases':len(rows),'evaluated_cases':len(evaluated),'evaluation_errors':len(rows)-len(evaluated),
+        'successes':successes,'success_rate':successes/len(rows) if rows and len(evaluated)==len(rows) else None,
+        'evaluation_coverage':len(evaluated)/len(rows) if rows else 0,
+        'errors':sum(bool(r['report'].get('error')) for r in rows),
+        'runtime_errors':sum(bool(r['report'].get('technical_error')) for r in rows),
+        'mean_latency_s':sum(r['latency_s'] for r in rows)/len(rows) if rows else 0,
+        'tool_calls':sum(r['metrics']['tool_calls'] for r in rows),
+        'tool_errors':sum(r['metrics']['tool_errors'] for r in rows),
+        'injections_triggered':sum(r['injection_status']=='triggered' for r in rows),
+        'faults_not_exercised':sum(r['injection_status']=='not_triggered' for r in rows),
+        'telemetry_cases':sum(r['model_usage']['available'] for r in rows)}
+    for field in ('llm_calls','llm_attempts','llm_retries','llm_call_errors','input_tokens','output_tokens'):
+        values = [r['model_usage'][field] for r in rows if r['model_usage'].get(field) is not None]
+        result[field] = sum(values) if len(values)==len(rows) else None
+    metric_names = {k for r in evaluated for k in r['evaluation']['metrics']}
+    for metric in sorted(metric_names):
+        values = [r['evaluation']['metrics'][metric] for r in evaluated if r['evaluation']['metrics'][metric] is not None]
+        result['mean_'+metric] = sum(values)/len(values) if values else None
+    return result
 
 
-def run_benchmark(category="all", benchmark_path=None, *, system=None,
-                  config_path=None, limit=0, case_ids=(), output_dir=None,
-                  dataset="original", dimension=None, **overrides):
-    from llm_config import summarize_calls
-    if system is None:
+def run_original(cases, output, system, settings):
+    """Keep the historical direct run_request path; no new episode interface or scoring."""
+    if system is None or system=='mas':
         import smart_home_langgraph as system
-    settings = system.resolve_settings(overrides, config_path=config_path) if hasattr(system, "resolve_settings") else overrides
-    output = Path(output_dir or ROOT / "logs/dexa")
-    output.mkdir(parents=True, exist_ok=True)
-    if config_path is not None or hasattr(system, "CONFIG_PATH"):
-        config = Path(config_path or os.getenv("SMARTHOME_CONFIG") or system.CONFIG_PATH)
-        (output / "experiment_config.toml").write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
-    if dimension and (dimension not in DIMENSIONS or dataset == "original"):
-        raise ValueError("--dimension requires --dataset extension or all and a known dimension.")
-    path = Path(benchmark_path or configured_path(load_config(config_path)["benchmarks"]["dexa"]["path"]))
-    cases, paths = load_cases(dataset, path)
-    sources = paths + [ROOT.parent / "benchmark" / name for name in ("complexity.py", "complexity_annotations.json")]
-    (output / "dataset.json").write_text(json.dumps({"dataset": dataset, "dimension": dimension,
-        "path": str(paths[0].resolve()), "sha256": hashlib.sha256(paths[0].read_bytes()).hexdigest(),
-        "sources": [{"path": str(p.resolve()), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in sources]}, indent=2), encoding="utf-8")
-    cases = [c for c in cases if (category == "all" or c["category"] == category)
-             and (not case_ids or c["id"] in case_ids) and (not dimension or c.get("dimension") == dimension)]
-    if limit:
-        cases = cases[:limit]
-    if not cases:
-        raise ValueError("No DEXA cases match the selected category/IDs.")
-    if any(c.get("dimension") in DIMENSIONS for c in cases) and not all(
-            hasattr(system, name) for name in ("TOOLS", "Simulator", "make_observation")):
-        raise NotImplementedError("DEXA extension scenarios require the current MAS simulator/tool boundary.")
+    elif isinstance(system,(str,Path)):
+        path = Path(system)
+        spec = importlib.util.spec_from_file_location('_legacy_dexa_system',path)
+        system = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(system)
+    if not hasattr(system,'run_request'):
+        raise ValueError('The original benchmark uses run_request; choose a MAS module or the original wrapper.')
     rows = []
-    for case in cases:
-        started = time.perf_counter()
-        events, report, error, effective = [], {}, None, settings
-        scenario = Scenario(case, system) if case.get("dimension") in DIMENSIONS else None
-        setup = scenario.setup() if scenario else {}
+    for c in cases:
+        events,error = [],None
+        started=time.perf_counter()
         try:
-            for event in system.run_request(case["user_input"], **settings, **setup):
-                events.append(event)
-                if scenario:
-                    scenario.observe(event)
-                if "episode_result" in event:
-                    report = event["episode_result"]
-                if "experiment_config" in event:
-                    effective = event["experiment_config"]["settings"]
+            events=list(system.run_request(c['user_input'],**settings))
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        exception = error
-        error = error or report.get("error")
-        row = {"id": case["id"], "input": case["user_input"], "category": case["category"],
-               "dimension": case.get("dimension", "original"), "complexity": case.get("complexity"),
-               "annotation": case.get("annotation"), "expected_recovery": case.get("expected_recovery"),
-               "expected_concurrency": case.get("expected_concurrency"),
-               "latency_s": time.perf_counter() - started, "error": error, "exception": exception, "settings": effective,
-               "events": events, "episode_result": report, "task_failures": report.get("task_failures", []),
-               "model_usage": report.get("model_usage", summarize_calls([]))}
-        if scenario:
-            row["extension"] = scenario.report(report, effective)
-        (output / f"{case['id']}.json").write_text(json.dumps(row, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+            error=f'{type(exc).__name__}: {exc}'
+        row={'id':c['id'],'input':c['user_input'],'events':events,'error':error,'latency_s':time.perf_counter()-started}
+        write_json(case_file(output,c['id']),row)
         rows.append(row)
-        print(f"[{len(rows)}/{len(cases)}] {case['id']}: {row['latency_s']:.2f}s" + (f" ERROR: {error}" if error else ""))
-    summary = {"overall": {"cases": len(rows), "errors": sum(r["error"] is not None for r in rows),
-                            "runtime_errors": sum(r["exception"] is not None for r in rows),
-                            "planning_failures": sum(any(t["kind"] == "plan" for t in r["task_failures"]) for r in rows),
-                            "action_failures": sum(any(t["kind"] in {"precondition", "tool", "output", "postcondition", "dispatch"}
-                                                       for t in r["task_failures"]) for r in rows),
-                            **summarize_calls([call for r in rows for e in r["events"]
-                                               for call in e.get("episode_result", {}).get("llm_calls", [])]),
-                            "mean_latency_s": sum(r["latency_s"] for r in rows) / len(rows) if rows else 0,
-                            "score": None, "note": "DEXA logs only; no automatic task-success score. Injected faults may produce expected execution errors."},
-               "by_category": grouped_summary(rows, "category"), "by_dimension": grouped_summary(rows, "dimension")}
-    (output / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    summary={'overall':{'cases':len(rows),'errors':sum(bool(r['error']) for r in rows)},'complete':True,
+             'note':'Unmodified historical reference: direct system logs, no extended scoring.'}
+    write_json(output/'summary.json',summary)
     return summary
 
 
-if __name__ == "__main__":
+def run_benchmark(category='all', benchmark_path=None, *, system=None, config_path=None,
+                  limit=0, case_ids=(), output_dir=None, dataset='extended', dimension=None,
+                  suite='all', failure_mode=None, resume=False, **settings):
+    if limit<0 or suite not in {'all','core','robustness'} or failure_mode not in (None,*FAILURES):
+        raise ValueError('Invalid limit/suite/failure selection.')
+    activate_config(config_path)
+    if benchmark_path is None and dataset!='original':
+        benchmark_path=configured_path(load_config(config_path)['benchmarks']['dexa']['path'])
+    cases,paths=load_cases(dataset,benchmark_path,suite=suite,failure_mode=failure_mode,dimension=dimension)
+    unknown=set(case_ids)-{c['id'] for c in cases}
+    if unknown:
+        raise ValueError('Unknown/filtered case IDs: '+', '.join(sorted(unknown)))
+    cases=[c for c in cases if (category=='all' or c['category']==category) and (not case_ids or c['id'] in case_ids)]
+    if limit: cases=cases[:limit]
+    if not cases: raise ValueError('No DEXA cases match the selection.')
+    output=Path(output_dir or ROOT/'logs/dexa')
+    if dataset=='original':
+        output.mkdir(parents=True,exist_ok=True)
+        return run_original(cases,output,system,settings)
+    participant=create_system(system,settings,config_path)
+    sources=paths+[ROOT.parent/'benchmark'/f for f in ('__init__.py','environment.py','evaluation.py','complexity.py')]
+    metadata={'benchmark':'dexa_extended','case_ids':[c['id'] for c in cases],'suite':suite,'failure_mode':failure_mode,
+        'settings':settings, 'configuration':load_config(config_path),
+        'participant':participant.metadata() if hasattr(participant,'metadata') else {'name':getattr(participant,'name',type(participant).__name__)},
+        'sources':{str(p.relative_to(ROOT.parent)) if p.is_relative_to(ROOT.parent) else str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}}
+    output=prepare_output(output,metadata,resume)
+    rows=[]
+    for case in cases:
+        path=case_file(output,case['id'])
+        previous=json.loads(path.read_text()) if resume and path.exists() else None
+        if previous and previous['evaluation']['score'] in (0,1):
+            rows.append(previous)
+            continue
+        session=Session(case)
+        if previous:
+            # Retry only the failed evaluator, never repeat the participant's actions.
+            session.state=previous['final_state'];session.initial=previous['initial_state']
+            session.calls=previous['tool_calls'];session.injections=previous['injections']
+            report,elapsed=previous['report'],previous['latency_s']
+        else:
+            episode=Episode('dexa',case['user_input'],session.public_context(),deepcopy(session.tools),session.call,session)
+            started=time.perf_counter()
+            report=system_report(participant,episode)
+            elapsed=time.perf_counter()-started
+            session.finish_schedules()
+        try:
+            evaluation=evaluate(case,session,report)
+        except Exception as exc:
+            evaluation={'score':None,'status':'evaluation_error','error':f'{type(exc).__name__}: {exc}'}
+        calls=[c for c in session.calls if c['origin']=='system']
+        injected=session.injections[0]['sequence'] if session.injections else None
+        row={'id':case['id'],'input':case['user_input'],'category':case['category'],'dimension':case.get('dimension','original'),
+            'suite':case['suite'],'pair_id':case.get('pair_id'),'failure_mode':case.get('injected_failure',{}).get('mode','none'),
+            'complexity':case['complexity'],'expected_behavior':case['expected_behavior'],'completed':evaluation['score'] in (0,1),
+            'latency_s':elapsed,'report':report,'model_usage':usage(report),'initial_state':session.initial,'final_state':session.state,
+            'tool_calls':session.calls,'injections':session.injections,
+            'injection_status':'triggered' if injected else 'not_triggered' if session.fault else 'not_requested',
+            'metrics':{'tool_calls':len(calls),'tool_errors':sum(c['status']=='error' for c in calls),
+                'scheduled_calls':sum(c['origin']=='scheduled' for c in session.calls),
+                'tool_calls_after_injection':sum(c['sequence']>injected for c in calls) if injected else None},
+            'evaluation':evaluation}
+        write_json(path,row);rows.append(row)
+        print(f"[{len(rows)}/{len(cases)}] {case['id']}: score={evaluation['score']} ({elapsed:.2f}s)",flush=True)
+    summary={'overall':summarize(rows),'complete':all(r['evaluation']['score'] in (0,1) for r in rows)}
+    for field in ('suite','dimension','category','failure_mode','pair_id'):
+        summary['by_'+field]={str(value):summarize([r for r in rows if r[field]==value]) for value in dict.fromkeys(r[field] for r in rows) if value is not None}
+    write_json(output/'summary.json',summary)
+    return summary
+
+
+if __name__=='__main__':
     import argparse
-    from smart_home_langgraph import add_settings_arguments, settings_from_args
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("category", nargs="?", default="all")
-    parser.add_argument("benchmark_path", nargs="?")
-    parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--case-id", dest="case_ids", action="append", default=[])
-    parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--dataset", choices=("original", "extension", "all"), default="original")
-    parser.add_argument("--dimension", choices=DIMENSIONS)
-    add_settings_arguments(parser)
-    args = parser.parse_args()
-    run_benchmark(args.category, args.benchmark_path, config_path=args.config,
-                  limit=args.limit, case_ids=args.case_ids, output_dir=args.output_dir,
-                  dataset=args.dataset, dimension=args.dimension,
-                  **settings_from_args(args))
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('category',nargs='?',default='all')
+    parser.add_argument('benchmark_path',nargs='?')
+    parser.add_argument('--dataset',choices=('original','extended','extension','all'),default='extended')
+    parser.add_argument('--system',default='mas')
+    parser.add_argument('--suite',choices=('all','core','robustness'),default='all')
+    parser.add_argument('--failure-mode',choices=FAILURES)
+    parser.add_argument('--dimension',choices=DIMENSIONS)
+    parser.add_argument('--case-id',dest='case_ids',action='append',default=[])
+    parser.add_argument('--limit',type=int,default=0)
+    parser.add_argument('--output-dir',type=Path)
+    parser.add_argument('--config',dest='config_path',type=Path)
+    parser.add_argument('--resume',action='store_true')
+    parser.add_argument('--settings-json',default='{}')
+    args=vars(parser.parse_args())
+    args.update(json.loads(args.pop('settings_json')))
+    result=run_benchmark(**args)
+    if not result['complete']: parser.exit(3,'Some automatic evaluations are incomplete; see the per-case error.\n')

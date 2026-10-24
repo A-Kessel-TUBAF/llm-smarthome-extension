@@ -97,10 +97,14 @@ def system_report(system, episode):
         report = system.run_episode(episode)
         if not isinstance(report, dict):
             raise TypeError("run_episode must return a report dictionary.")
+        if not isinstance(report.get("answer", ""), str):
+            raise TypeError("run_episode report.answer must be a string.")
     except Exception as exc:
         report = {"status": "error", "error": f"{type(exc).__name__}: {exc}",
                   "exception": type(exc).__name__, "technical_error": True}
     report.setdefault("answer", "")
+    report.setdefault("status", "error" if report.get("error") else "finished")
+    report.setdefault("telemetry_available", "llm_calls" in report)
     report.setdefault("llm_calls", [])
     report.setdefault("model_usage", summarize_calls(report["llm_calls"]))
     return report

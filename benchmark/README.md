@@ -1,283 +1,157 @@
-# Smart Home Multi-Agent Benchmark
-This benchmark evaluates LLM-based multi-agent smart home systems. It contains 60 test cases across three complexity levels.
+# DEXA extended benchmark
 
+The revised edition contains **127 scenarios**: **104 core** and **23 robustness**.
+It is the complete dataset in `extension_tasks.json`, with annotations in `complexity_annotations.json`, including the revised cases
+inherited from the original edition. `benchmark_data.json` is the **unchanged
+historical 60-case reference** and does not require the new episode interface.
+`moderate_15`, `ext_fail_08`, `simple_13` (reading light) and `complex_08` (cozy movie night) are absent from the revised edition and its annotations. `ext_amb_09` replaces the latter subjective scene assumptions with a unique audible-player scenario.
 
-## Guide
+## Run
 
-Here is the roadmap for this documentation:
-
-1.  **[Benchmark Structure and Test Case Format](#1-benchmark-structure-and-test-case-format)** - Overview of complexity levels and definitions of the JSON data fields.
-2.  **[How to Use This Benchmark](#2-how-to-use-this-benchmark)** - Execution and evaluation steps.
-3.  **[Intent Specification](#3-intent-specification)** - Logic for "Required" and "Acceptable" intents.
-4.  **[Device Types](#4-device-types)** - The 8 device interfaces your system needs to map to.
-5.  **[Evaluation Criteria](#5-evaluation-criteria)** - Assessment standards.
----
-
-
-## 1. Benchmark Structure and Test Case Format
-
-- **Simple cases** (1-2 intents): 20 cases
-- **Moderate cases** (3 intents): 20 cases
-- **Complex cases** (4+ intents): 20 cases
-
-Each test case in `benchmark_data.json` contains the following fields:
-
-- **`id`**: Unique identifier (e.g., "simple_01", "moderate_15")
-- **`category`**: Complexity level ("simple", "moderate", or "complex")
-- **`user_input`**: Natural language user request
-- **`required_intents` or `acceptable_intents`**: Expected intents
-- **`collaboration`**: Collaboration requirements between devices
-- **`expected_final_output`**: Expected end result
----
-## 2. How to Use This Benchmark
-
-### 1. Load the Test Cases
-
-```python
-import json
-
-with open('benchmark_data.json', 'r') as f:
-    benchmark = json.load(f)
-
-for test_case in benchmark['test_cases']:
-    user_input = test_case['user_input']
-    # Run your system
-```
-
-### 2. Map Your Devices
-
-Map your system's devices to the benchmark's [device types](#4-device-types). For example:
-- Your "Alexa" → `search` type
-- Your "LG Smart Fridge" → `fridge` type
-- Your "Samsung TV" → `display` type
-
-### 3. Running the Benchmark
-Execute the following script to run the system and generate interaction logs.
-
-Note: This script does not calculate the final score automatically. Please refer to the "Manual Evaluation" section below for scoring instructions.
-
-From the `system-implementation/` directory:
+From `system_implementation/`, install the existing requirements and configure the
+model in `experiment_config.toml`. ReAct/DS-IA and the SAGE parent can use
+`external_benchmarks/requirements_react.txt`; upstream SAGE still needs its existing
+separate checkout/environment. The extended benchmark requires no judge model.
 
 ```bash
-# Run all 60 test cases
-python run_benchmark.py all
+# Same cases, environment and evaluator for all four participants
+python run_experiments.py --benchmark dexa --system mas --output-dir logs/dexa/mas
+python run_experiments.py --benchmark dexa --system react --output-dir logs/dexa/react
+python run_experiments.py --benchmark dexa --system dsia --output-dir logs/dexa/dsia
+python run_experiments.py --benchmark dexa --system sage --output-dir logs/dexa/sage
 
-# Run by category
-python run_benchmark.py simple
-python run_benchmark.py moderate  
-python run_benchmark.py complex
+# Select the unperturbed core or the robustness suite
+python run_experiments.py --benchmark dexa --system mas --suite core --output-dir logs/dexa/core
+python run_experiments.py --benchmark dexa --system mas --suite robustness --output-dir logs/dexa/robustness
+python run_experiments.py --benchmark dexa --system react --failure-mode transient --output-dir logs/dexa/transient
+
+# One case, repeated experiment, or resume a compatible existing run
+python run_experiments.py --benchmark dexa --system mas --case-id robust_power_cut --output-dir logs/dexa/power
+python run_experiments.py --benchmark dexa --system mas --repetitions 3 --suite robustness --output-dir logs/dexa/repeated
+python run_experiments.py --benchmark dexa --system mas --suite robustness --output-dir logs/dexa/robustness --resume
+
+# Historical reference: direct run_request, historical inputs, no new interface
+python run_benchmark.py all --dataset original --system mas --output-dir logs/dexa/original
 ```
 
-### 4. Manual Evaluation Process
-Once the simulation is complete (Step 3), proceed with the performance evaluation:
+`--dataset extended` is the DEXA default. The older names `extension` and `all`
+are compatibility aliases for this complete revised edition, not additional copies
+of the historical cases. `--category`, `--case-id`, `--dimension`, `--suite` and
+`--failure-mode` select cases before execution. `--failure-mode none` includes the
+five unperturbed robustness controls; `--suite core` excludes those controls.
+`python run_experiments.py` now defaults to all configured systems on extended
+DEXA first, followed by SimuHome, Home Assistant and HomeBench. All repetitions
+of one benchmark finish before the next begins. `--benchmark dexa` selects only
+this benchmark. `--benchmark all` applies DEXA suite/dimension/failure filters only
+to its DEXA runs. The historical `--dataset original` is a single-benchmark option.
 
-1. Review the logs generated in **[Step 3: Running the Benchmark](#3-running-the-benchmark)**
-2. Verify Execution: check if the activated devices and actions match the `required_intents`/`acceptable_intents` in `benchmark_data.json` 
-3. Verify Collaboration: check if collaboration occurred correctly
-4. Record the results: Complete / Partial / Failed based on the **[Evaluation Criteria](#5-evaluation-criteria)**
+## Boundary and ownership
 
-Success rate can be calculated as: (Complete cases / Total cases) × 100%
+The existing `external_benchmarks/common.py` owns `Episode` and `run_episode`.
+An episode supplies the request, public context, JSON tool schemas and `invoke`.
+Each system wrapper translates this boundary into its native input/output format.
+It must return `answer` (a string) and an execution status, and may return
+`llm_calls` or other internal diagnostics. Missing model telemetry is unknown,
+not zero. All device actions must use `episode.invoke(name, arguments)`.
 
+`environment.py` owns the home, devices/services, fixed catalogues, clock,
+state transitions, fault injection and recorder. It imports no participant code.
+The participant receives no gold goals, failure labels or reference annotations.
+Calendar and fridge contents are learned through their tools. MAS translates public
+schemas into its native cards/contracts and uses its existing controller; the
+wrapper adds no planning or repair loop. ReAct, DS-IA and SAGE keep their existing
+architectures. The wrappers contain no benchmark score calculation.
 
-## 3. Intent Specification
+Each case starts a fresh `Session`. All beginning values come from the versioned
+`initial_home()` profile plus that case's explicit `scenario` room selection,
+state overrides, time and public preferences. This includes guest/kids/study/dining
+rooms where required, dimmable lights, thermostats, fridge expiry dates and to-do
+information. Temperatures describe thermostat setpoints, not physical heating.
+Media and information are synthetic catalogue entries, not real streaming/web results.
 
-### 1. `required_intents` (Common)
+`evaluation.py` alone computes the extended benchmark's scores from the request's
+reference predicates, recorded calls, user-facing answer and full observed state.
+Independent external benchmarks retain their native environments/evaluators.
 
-Used for **explicit, unambiguous user requests** where the system should identify specific intents.
+## Automatic evaluation
 
-**Format:**
-```json
-{
-  "required_intents": [
-    {"intent": "Set 20-minute timer", "device_type": "clock"},
-    {"intent": "Dim lights", "device_type": "light"}
-  ]
-}
+Every extended case receives the same result structure, including inherited cases.
+There is no manual Complete/Partial/Failed step and no LLM judge. Each result has
+an automatic binary `evaluation.score` and the individual checks explaining it.
+
+- Required state predicates must hold. Intermediate states are permitted only
+  for goals explicitly annotated as sequential/temporary.
+- Information goals require an actual recorded observation. Selected operation
+  arguments, durations, dates and media/content terms must match the published
+  reference rules. The recipe-dependent timer checks the cooking time of the
+  selected, named catalogue recipe rather than requiring one fixed duration.
+  Inventory-based selection rules also check the known recipe ingredients against
+  the actual starting inventory; meal-plan variants require the declared number
+  of distinct named recipes.
+- Result dependencies require successful prerequisites before dependent calls.
+  Order-only dependencies allow continuation after a failed prerequisite attempt.
+  Computational answer goals can combine independent reads in either order.
+- A complete-state comparison checks every field outside `allowed_changes`.
+  Wrong values inside requested fields fail the corresponding goal. Media/display content must still match in the final state unless the goal is explicitly temporary. The trace catches forbidden
+  writes even if the final state is later restored.
+- Existing calendar entries and list items must be preserved. Duplicate timers,
+  alarms/events and excess list writes fail, including duplicates with different labels.
+- Scheduled effects run on the virtual clock after the participant returns.
+  Their execution time, operation and arguments are checked. Acting immediately
+  instead of waiting for an explicitly future action fails. No real-time waiting
+  or hidden action scheduling is performed on a participant's behalf.
+- Ambiguity 0 means an explicit task; 1 means omitted settings/targets are uniquely resolved by public context; 2 requires a focused clarification for unresolved parts. All 26 level-2 cases require a question about unresolved goals; ten also require the clear independent goals to execute. Only the unresolved parts and dependent actions must remain untouched. No user reply is simulated or awaited.
+- Music playback never requires a separate music-search call. `simple_06` requires playback for one hour followed by stopping, with no extra countdown timer. `complex_17` likewise requires timed effects without separate countdowns. Necessary power preparation is allowed; unrelated volume, lighting and temperature changes are not.
+- Conditional variants cover each outcome, including all four home/rain combinations, eggs/flour combinations and calendar/ingredient/light-status alternatives. `inactive_branch_calls` rejects executing a skipped branch, even when a call leaves the state unchanged.
+- The unique audible-player cases accept muting, stopping or switching off the actual sound source. Other devices and temperatures must stay unchanged. Equivalent ways to fulfill a specified goal are not unresolved ambiguity.
+- The public context includes default device routing, saved numerical preferences and a search location. Explicit targets and unique observable referents take precedence over defaults. Each annotation records its rationale in `ambiguity_reason`.
+- Permanent failures require truthful user-facing failure reporting, preserved
+  independent goals and no dependent writes using unavailable information.
+  Transient/power-cut scenarios require actual recovery of the requested goals.
+
+Text/content checks are intentionally **lexical**, using `all_of`, `any_of`,
+`none_of` and optional pattern-count rules stored per case. They support the listed
+English/German forms. They do not prove arbitrary semantic equivalence or fully
+understand negation, recipe quality, entertainment suitability, or unsupported
+paraphrases. Keep fixture/canonical names in displayed content when possible.
+The score means "passed the published deterministic checks", not a general proof
+of natural-language correctness. No hidden judge or manual fallback is used.
+
+## Metrics
+
+Mandatory: total participant wall time; every tool call/argument/result/error;
+actual injections; initial/final state; per-goal fulfillment; applicable dependency,
+conflict, clarification and schedule checks; unwanted changes and duplicate writes;
+failure reporting and recovery when a fault was exercised. `response_match` is
+reported only where lexical answer requirements exist. Not-applicable fields are null.
+`intent_recall` counts required executable user goals, excluding technical helper steps; it is null when no such goal is executable. It can be below 1 in a correctly handled
+permanent-failure scenario; the overall scenario score follows its recovery rules.
+
+Optional: logical LLM calls, transport attempts/retries/errors and backend token
+counts. Incomplete token telemetry is null and never silently totaled as complete.
+System diagnostics remain in the raw `report`. **Summed model-call time, Lean
+acceptance rate and MAS-internal execution batches are not standard metrics.**
+The summed model-call time may remain inside participant-owned raw diagnostics.
+Tool counts include unsuccessful system attempts; scheduled calls are counted
+separately. Simulator evaluator read-back is not an agent action.
+
+`summary.json` groups by suite, original task category/dimension, failure mode and
+paired task ID. Evaluation errors leave the score null, keep coverage explicit and
+cause a nonzero CLI exit. Resume refuses changed sources/settings and does not
+repeat already completed participant episodes. A configured but never triggered
+fault is `not_exercised`, gives no recovery credit, and cannot yield a robustness pass.
+
+## Complexity and checks
+
+See `EXTENSION.md` for the reviewed complexity/ambiguity rules and the implementation
+audit. Print all vectors with `python ../benchmark/complexity.py --json`.
+
+Offline integration checks, from the project root:
+
+```bash
+python -m unittest discover -s benchmark -p 'test_*.py' -v
 ```
 
-**Evaluation:**
-- **Correct**: System identifies **all** listed intents.
-- **Partial**: System identifies **some but not all** listed intents.
-- **Incorrect**: System identifies **none** of the listed intents (or identifies wrong ones).
-
----
-
-### 2. `acceptable_intents` (For Ambiguous Cases)
-
-Used for **implicit or ambiguous user requests** where multiple interpretations are reasonable. The system should identify **at least one** of the listed intents.
-
-**Format:**
-```json
-{
-  "acceptable_intents": [
-    {"intent": "Lower temperature", "device_type": "thermostat"},
-    {"intent": "Find lunch recipe", "device_type": "search"}
-  ]
-}
-```
-
-**Evaluation:**
-Any combination of listed intents is acceptable
-- **Correct**: System identifies **at least one** of the listed intents.
-- **Partial**: Not applicable (this category is binary; identifying any valid intent is sufficient).
-- **Incorrect**: System identifies **none** of the listed intents.
-
-
-**Acceptable system behaviors:**
-- Identifies thermostat only ✓
-- Identifies search only ✓
-- Identifies both ✓
-- Identifies neither ✗
-
----
-
-### 3. Mixed: `required_intents` + `acceptable_intents` 
-
-Used when a user request contains both **explicit intents** and **ambiguous intents**.
-**Format:**
-```json
-{
-  "required_intents": [
-    {"intent": "Set wake-up alarm", "device_type": "clock"}
-  ],
-  "acceptable_intents": [
-    {"intent": "Play gentle music", "device_type": "audio"},
-    {"intent": "Dim lights", "device_type": "light"},
-    {"intent": "Adjust temperature", "device_type": "thermostat"}
-  ],
-  "note": "Clock required. At least one sleep environment device expected for 'Correct'. Only clock → 'Partial'."
-}
-```
-
-**Evaluation:**
-- **Correct**: All `required_intents` satisfied **AND** at least one `acceptable_intents` identified.
-- **Partial**:
-  - All `required_intents` satisfied **BUT** no `acceptable_intents` identified.
-  - OR `required_intents` are only **partially** satisfied (regardless of acceptable intents).
-- **Incorrect**: No `required_intents` satisfied.
----
-## 4. Device Types
-
-This benchmark uses the following device type abstractions. Systems should map their devices to these types:
-
-### search
-- **Description**: Web search and information retrieval
-- **Capabilities**: Search for recipes, locations, recommendations; provide music recommendations; general information lookup
-- **Examples**: search engine, web browser, voice assistant with search
-
-### fridge
-- **Description**: Food inventory
-- **Capabilities**: Check available ingredients, track food inventory
-- **Examples**: smart fridge, food inventory tracker
-
-### display
-- **Description**: Visual output and content display
-- **Capabilities**: Show videos/TV shows/movies, display recipes/schedules/information
-- **Examples**: TV, monitor, screen, smart display
-
-### audio
-- **Description**: Audio playback and sound control
-- **Capabilities**: Play music/podcasts/audio content, adjust volume
-- **Examples**: smart speaker, sound system, stereo, voice assistant with audio
-
-### clock
-- **Description**: Time related and timer functions
-- **Capabilities**: Set timers and alarms, time tracking
-- **Examples**: timer, alarm clock, smart clock
-
-### thermostat
-- **Description**: Temperature control and climate management
-- **Capabilities**: Adjust temperature, climate control
-- **Examples**: smart thermostat, climate control system
-
-### light
-- **Description**: Lighting control and adjustment
-- **Capabilities**: Turn lights on/off, adjust brightness, set lighting scenes
-- **Examples**: smart bulb, light switch, dimmer, lighting system
-
-### calendar
-- **Description**: Schedule and event management
-- **Capabilities**: Add/view calendar events, schedule management, appointment tracking
-- **Examples**: calendar app, scheduling system, digital planner
-
----
-
-## 5. Evaluation Criteria
-
-Each test case is evaluated along three dimensions, which together determine the overall completion rating:
-
-```mermaid
-flowchart LR
-    A[EvaluateIntent Recognition] --> D[OverallCompletion]
-    B[EvaluateCollaboration] --> D
-    C[CheckFinal Output] --> D
-    
-    D --> E{Result}
-    E -->|All conditions met| F[✓ Complete]
-    E -->|Has issues but works| G[⚠ Partial]
-    E -->|Critical failure| H[✗ Failed]
-    
-    style A fill:#e3f2fd
-    style B fill:#e3f2fd
-    style C fill:#e3f2fd
-    style F fill:#d4edda
-    style G fill:#fff3cd
-    style H fill:#f8d7da
-```
-
-### Intent Recognition & Device Activation
-
-Evaluates whether the system correctly identifies user intents and activates appropriate devices. Check which devices were activated and what actions they performed.
-
-**Correct:** All of the following conditions must be met:
-- All `required_intents` addressed (corresponding devices activated and performed actions)
-- At least one `acceptable_intents` addressed (if specified in test case)
-- Appropriate devices selected based on intent requirements
-
-**Partial:** Any of the following conditions results in a partial rating:
-- Some `required_intents` missed (corresponding devices not activated)
-- OR all `acceptable_intents` missed (when specified)
-- OR devices activated but performed suboptimal actions
-
-**Incorrect:** Any of the following conditions results in an incorrect rating:
-- All `required_intents` missed (no corresponding devices activated)
-- OR completely wrong devices activated (e.g., thermostat activated when clock was required)
-- OR devices activated but performed meaningless actions
-
-### Collaboration Success
-
-
-For test cases requiring coordination among multiple devices (`collaboration.is_needed = true`), evaluates whether agents correctly identify collaboration needs and execute collaboration effectively. Each collaboration instance is evaluated individually.
-
-**Successful:** A single collaboration is rated as successful when all of the following conditions are met:
-
-- Agent correctly identifies the need for external information
-- Obtains appropriate information from the correct source (via explicit request or shared state access)
-- Collaboration response properly integrated
-
-**Failed:** A single collaboration is rated as failed when any of the following occurs:
-- Agent fails to recognize the need for collaboration
-- Requests information from the wrong agent
-- Requests wrong or irrelevant information
-- Fails to integrate collaboration response properly
-
-### Overall Completion
-
-Assesses system performance in fulfilling user requests.
-
-**Complete:**
-A test case is rated as *Complete* when **all** of the following conditions are met:
-- Intent recognition & device activation rated as "Correct"
-- All required collaborations rated as "Successful"
-- System produces coherent and complete final output
-
-**Partial:**
-A test case is rated as *Partial* when the system has quality issues but still produces output:
-- Intent recognition & device activation is rated as "Partial" OR some collaborations failed
-- Despite these issues, the system produces output (though with omissions or minor errors)
-
-**Failed:**
-A test case is rated as *Failed* when **any** of the following occurs:
-- Intent recognition & device activation rated as "Incorrect"
-- Collaborations failed such that the primary user intent cannot be fulfilled
-- System unable to produce meaningful output
+They exercise the actual MAS controller and ReAct/DS-IA loops using scripted model
+responses, plus SAGE's parent/worker protocol with a test worker. They do not claim
+an end-to-end run of upstream SAGE or live language-model experiments.

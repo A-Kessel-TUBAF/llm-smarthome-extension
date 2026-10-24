@@ -69,7 +69,7 @@ The default matrix includes this as `planner_only`. For a single benchmark, the
 standalone CLI also accepts `--no-domain-agents`. `mas.domain_agents_enabled`
 controls the same switch in TOML; leave its default enabled for matrix comparisons.
 
-For the included DEXA dataset:
+For the complete extended DEXA benchmark (automatic evaluation, no judge):
 
 ```bash
 python run_experiments.py --system mas --benchmark dexa
@@ -86,7 +86,8 @@ python run_experiments.py --system mas --benchmark dexa
 | `llm_config.py` | MAS model clients and usage |
 | `model_client.py` | Shared HTTP client, HTTP-500 retries and usage aggregation |
 | `run_experiments.py` | Sequential experiment processes and comparison results |
-| `run_benchmark.py` | Included DEXA execution log |
+| `run_benchmark.py` | Extended DEXA runner, shared episodes and automatic evaluation |
+| `../benchmark/` | Independent DEXA environment, reference predicates and evaluator |
 | `external_benchmarks/` | Native benchmark adapters and independent system wrappers |
 | `lean/` | Allocation checker; build with `lake build` |
 | `assurance/qed_leaf/` | Optional proof audit; see its README |
@@ -151,34 +152,17 @@ on over the network once fully off; Home Assistant then needs Wake-on-LAN or HDM
 
 ### Evaluation
 
-For detailed benchmark evaluation instructions, see [`../benchmark/README.md`](../benchmark/README.md).
+The extended DEXA benchmark automatically scores all selected cases through the
+shared `run_episode` interface. MAS, ReAct, DS-IA and SAGE use the same environment,
+fault injector and evaluator. No manual scoring or LLM judge is needed.
 
-#### Quick Evaluation Workflow
-
-1. **Run benchmark:**
-   ```bash
-   python run_benchmark.py simple
-   python run_benchmark.py moderate  
-   python run_benchmark.py complex
-   ```
-   or
-   ```bash
-   python run_benchmark.py all
-   ```
-2. **Review logs:**
-   - Check `logs/` directory
-   - Each test case has its own log file
-
-3. **Evaluate according to criteria:**
-   - Intent Recognition & Device Activation
-   - Collaboration Success
-   - Overall Completion
-
-4. **Calculate metrics:**
+```bash
+python run_experiments.py --benchmark dexa --system mas --suite core --output-dir logs/dexa/core
+python run_experiments.py --benchmark dexa --system react --suite robustness --output-dir logs/dexa/robustness
 ```
-   Success Rate = (Complete cases / Total cases) × 100%
-```
-Logs are saved in `logs/` directory.
+
+See [`../benchmark/README.md`](../benchmark/README.md) for selection filters,
+metric definitions, automatic text checks and the unchanged historical reference.
 
 ## System Architecture
 

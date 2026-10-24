@@ -1,7 +1,6 @@
 """Run one system or the configured matrix on selected benchmarks."""
 import argparse
 import csv
-import hashlib
 import importlib.util
 import json
 import os
@@ -11,34 +10,46 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from external_benchmarks.common import BENCHMARKS, SYSTEMS, write_json
+from external_benchmarks.common import SYSTEMS, write_json
 from configuration import CONFIG_PATH, activate_config, config_path as configured_path, load_config
 from run_benchmark import DIMENSIONS
 
 ROOT = Path(__file__).resolve().parent
+BENCHMARKS = ("dexa", "simuhome", "homeassistant", "homebench")
 
 
 def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, category="all",
                    limit=0, case_ids=(), output_dir=None, config_path=None, settings=None, resume=False,
-                   dataset="original", dimension=None):
-    if benchmark != "dexa" and (dataset != "original" or dimension):
-        raise ValueError("--dataset and --dimension are available only for --benchmark dexa.")
+                   dataset=None, dimension=None, suite="all", failure_mode=None):
+    dataset = dataset or ("extended" if benchmark == "dexa" else "original")
+    if benchmark != "dexa" and (dataset != "original" or dimension or suite != "all" or failure_mode):
+        raise ValueError("DEXA selection filters require --benchmark dexa.")
     activate_config(config_path)
     output = Path(output_dir or Path(configured_path(load_config()["experiments"]["output_dir"])) / "single")
     output.mkdir(parents=True, exist_ok=True)
     settings = settings or {}
-    if benchmark == "dexa" and resume:
-        raise ValueError("Resume is supported only for external benchmarks.")
     try:
-        if benchmark != "dexa":
-            from external_benchmarks.common import create_system
+        from external_benchmarks.common import create_system
+        if benchmark == "dexa":
+            from run_benchmark import run_benchmark
+            participant = system_path
+            if str(system_path).endswith(".py") and dataset != "original":
+                path = Path(system_path).resolve()
+                spec = importlib.util.spec_from_file_location("_benchmark_system", path)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module
+                spec.loader.exec_module(module)
+                participant = create_system(module, settings, config_path)
+            summary = run_benchmark(category, benchmark_path, system=participant, config_path=config_path,
+                limit=limit, case_ids=case_ids, output_dir=output, resume=resume, dataset=dataset,
+                dimension=dimension, suite=suite, failure_mode=failure_mode, **settings)
+        else:
             from external_benchmarks.run_benchmark import run_benchmark
             name = str(system_path)
             if name in SYSTEMS or (":" in name and not name.endswith(".py")):
                 participant = create_system(name, settings, config_path)
             else:
                 path = Path(system_path).resolve()
-                sys.path.insert(0, str(path.parent))
                 spec = importlib.util.spec_from_file_location("_benchmark_system", path)
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[spec.name] = module
@@ -48,46 +59,24 @@ def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, c
                 participant = create_system(module, settings, config_path)
             summary = run_benchmark(category, benchmark_path, benchmark=benchmark, system=participant,
                 limit=limit, case_ids=case_ids, output_dir=output, resume=resume)
-            if (output / "failure.json").exists():
-                (output / "failure.json").unlink()
-            return summary
-        system_path = ROOT / "smart_home_langgraph.py" if str(system_path) == "mas" else Path(system_path).resolve()
-        config_path = config_path or os.getenv("SMARTHOME_CONFIG") or CONFIG_PATH
-        # Load this runner before original/ can shadow it.
-        from run_benchmark import run_benchmark as run
-        sys.path.insert(0, str(system_path.parent))
-        spec = importlib.util.spec_from_file_location("_benchmark_system", system_path)
-        system = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = system
-        spec.loader.exec_module(system)
-        model_config = sys.modules.get("llm_config")
-        metadata = {"benchmark": benchmark, "system": str(system_path), "overrides": settings,
-                    "source_sha256": {**{p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                         for p in system_path.parent.glob("*.py")},
-                                      **{str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                                         for p in (ROOT / "external_benchmarks").rglob("*.py")}},
-                    "config_toml": Path(config_path).read_text(encoding="utf-8"),
-                    "models": {key: getattr(model_config, key, None) for key in
-                               ("DEFAULT_MODEL", "SAME_LLM_FOR_ALL_AGENTS", "ROLE_MODELS")},
-                    "python": sys.version}
-        (output / "run.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        if benchmark not in system.SUPPORTED_BENCHMARKS:
-            raise NotImplementedError(f"{system_path} does not support {benchmark}; see external_benchmarks/README.md")
-        return run(category, benchmark_path, system=system, config_path=config_path, limit=limit,
-                   case_ids=case_ids, output_dir=output, dataset=dataset, dimension=dimension, **settings)
+        (output / "failure.json").unlink(missing_ok=True)
+        return summary
     except Exception as exc:
         if not isinstance(exc, (FileExistsError, ValueError)):
-            (output / "failure.json").write_text(json.dumps({"error": f"{type(exc).__name__}: {exc}",
-                "status": "unsupported" if isinstance(exc, NotImplementedError) else "failed"}, indent=2), encoding="utf-8")
+            write_json(output / "failure.json", {"error": f"{type(exc).__name__}: {exc}",
+                "status": "unsupported" if isinstance(exc, NotImplementedError) else "failed"})
         raise
 
 
-def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all", limit=0, case_ids=(),
+def run_experiments(*, benchmark="all", benchmark_path=None, category="all", limit=0, case_ids=(),
                     runs=None, repetitions=None, config_path=None, output_dir=None,
                     benchmark_paths=None, benchmark_pythons=None, resume=False, timestamped=True,
-                    dataset="original", dimension=None):
-    if benchmark != "dexa" and (dataset != "original" or dimension):
-        raise ValueError("--dataset and --dimension are available only for --benchmark dexa.")
+                    dataset=None, dimension=None, suite="all", failure_mode=None):
+    dataset = dataset or ("extended" if benchmark in {"dexa", "all"} else "original")
+    if benchmark not in {"dexa", "all"} and (dataset != "original" or dimension or suite != "all" or failure_mode):
+        raise ValueError("DEXA selection filters require --benchmark dexa or all.")
+    if benchmark == "all" and dataset == "original":
+        raise ValueError("The full matrix uses extended DEXA; select --benchmark dexa for --dataset original.")
     if runs is None or any(run.get("config") is None for run in runs):
         activate_config(config_path)
     defaults = load_config()["experiments"]
@@ -96,7 +85,7 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
     if limit < 0 or repetitions < 1:
         raise ValueError("limit must be nonnegative and repetitions must be positive.")
     if benchmark == "all" and (benchmark_path or category != "all" or case_ids):
-        raise ValueError("For --benchmark all use --homebench-path/--simuhome-path/--homeassistant-path; "
+        raise ValueError("For --benchmark all use --dexa-path/--homebench-path/--simuhome-path/--homeassistant-path; "
                          "--category and --case-id are only supported for a single benchmark.")
     output = Path(output_dir or configured_path(defaults["output_dir"])).resolve()
     if timestamped:
@@ -104,27 +93,28 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
     output.mkdir(parents=True, exist_ok=resume)
     benchmarks = BENCHMARKS if benchmark == "all" else (benchmark,)
     configured = load_config()["benchmarks"]
-    paths = {b: os.getenv({"homebench": "HOMEBENCH_PATH", "simuhome": "SIMUHOME_PATH", "homeassistant": "HOMEASSISTANT_DATASET_PATH"}[b])
-             or configured_path(configured[b]["path"]) for b in BENCHMARKS}
+    paths = {b: os.getenv({"dexa": "DEXA_PATH", "homebench": "HOMEBENCH_PATH", "simuhome": "SIMUHOME_PATH", "homeassistant": "HOMEASSISTANT_DATASET_PATH"}[b])
+             or configured_path("../benchmark/benchmark_data.json" if b == "dexa" and dataset == "original"
+                                else configured[b]["path"]) for b in BENCHMARKS}
     paths.update(benchmark_paths or {})
     if benchmark_path:
         paths[benchmark] = benchmark_path
-    selected_pythons = {b: os.getenv(b.upper() + "_PYTHON") or configured_path(configured[b]["python"], executable=True)
-                        for b in BENCHMARKS if os.getenv(b.upper() + "_PYTHON") or configured[b]["python"]}
+    selected_pythons = {b: os.getenv(b.upper() + "_PYTHON") or configured_path(configured[b].get("python"), executable=True)
+                        for b in BENCHMARKS if os.getenv(b.upper() + "_PYTHON") or configured[b].get("python")}
     selected_pythons.update(benchmark_pythons or {})
     pythons = {}
     for name, executable in selected_pythons.items():
         found = shutil.which(os.path.expanduser(str(executable)))
         # Preserve venv symlinks; resolving them selects the base interpreter.
         pythons[name] = str(Path(found).absolute()) if found else str(executable)
-    manifest = {"runs": runs, "repetitions": repetitions, "benchmark": benchmark,
+    manifest = {"runs": runs, "repetitions": repetitions, "benchmark": benchmark, "benchmarks": list(benchmarks),
                 "category": category, "limit": limit, "case_ids": list(case_ids),
                 "benchmark_paths": {b: str(Path(paths.get(b) or benchmark_path).resolve())
                                     for b in benchmarks if paths.get(b) or benchmark_path},
                 "benchmark_pythons": {b: str(pythons.get(b) or sys.executable) for b in benchmarks}}
     manifest = json.loads(json.dumps(manifest, default=str))
-    if benchmark == "dexa":
-        manifest.update(dataset=dataset, dimension=dimension)
+    if "dexa" in benchmarks:
+        manifest.update(dataset=dataset, dimension=dimension, suite=suite, failure_mode=failure_mode)
     if resume and (output / "runs.json").exists():
         if json.loads((output / "runs.json").read_text()) != manifest:
             raise ValueError("Resume refused: experiment selection/settings changed.")
@@ -140,8 +130,8 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
         if source.resolve() != target:
             shutil.copyfile(source, target)
     rows = []
-    for repetition in range(1, repetitions + 1):
-        for selected_benchmark in benchmarks:
+    for selected_benchmark in benchmarks:
+        for repetition in range(1, repetitions + 1):
             for run in runs:
                 folder = output / selected_benchmark if benchmark == "all" else output
                 destination = folder / f"{run['name']}_{repetition}"
@@ -153,8 +143,7 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
                            "--category", category, "--limit", str(limit), "--output-dir", str(destination),
                            "--repetitions", "1",
                            "--settings-json", json.dumps(run.get("settings", {}))]
-                if selected_benchmark != "dexa":
-                    command += ["--" + selected_benchmark + "-python", command[0]]
+                command += ["--" + selected_benchmark + "-python", command[0]]
                 selected_config = str(Path(os.getenv("SMARTHOME_CONFIG") or CONFIG_PATH).resolve())
                 participant_config = run.get("config")
                 if participant_config is None and (not wrapped or name == "mas"):
@@ -162,7 +151,9 @@ def run_experiments(*, benchmark="homebench", benchmark_path=None, category="all
                 if participant_config:
                     command += ["--config", str(Path(participant_config).resolve())]
                 if selected_benchmark == "dexa":
-                    command += ["--dataset", dataset]
+                    command += ["--dataset", dataset, "--suite", suite]
+                    if failure_mode:
+                        command += ["--failure-mode", failure_mode]
                     if dimension:
                         command += ["--dimension", dimension]
                 path = paths.get(selected_benchmark) or benchmark_path
@@ -209,7 +200,7 @@ if __name__ == "__main__":
     activate_config(selected.config)
     defaults = load_config()["experiments"]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmark", choices=(*BENCHMARKS, "all", "dexa"), default=defaults["benchmark"])
+    parser.add_argument("--benchmark", choices=(*BENCHMARKS, "all"), default=defaults["benchmark"])
     parser.add_argument("--benchmark-path")
     for name in BENCHMARKS:
         parser.add_argument(f"--{name}-path", help="Data/checkout path for " + name)
@@ -219,8 +210,10 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=defaults["limit"])
     parser.add_argument("--repetitions", type=int, default=defaults["repetitions"])
     parser.add_argument("--case-id", dest="case_ids", action="append", default=[])
-    parser.add_argument("--dataset", choices=("original", "extension", "all"), default="original",
-                        help="DEXA case set: 60 original, 40 extension, or all 100")
+    parser.add_argument("--dataset", choices=("original", "extended", "extension", "all"), default=None,
+                        help="DEXA: untouched original or revised extended edition (default)")
+    parser.add_argument("--suite", choices=("all", "core", "robustness"), default="all")
+    parser.add_argument("--failure-mode", choices=("none", "transient", "unavailable", "no_effect", "state_changed"))
     parser.add_argument("--dimension", choices=DIMENSIONS, help="Filter DEXA extension cases")
     parser.add_argument("--system", default=defaults["system"] or None, help="mas, react, sage, dsia, module:factory, or a legacy MAS Python file")
     parser.add_argument("--config", type=Path)
@@ -234,7 +227,7 @@ if __name__ == "__main__":
         load_env(args.env_file)
     options = dict(benchmark=args.benchmark, benchmark_path=args.benchmark_path,
                    category=args.category, limit=args.limit, case_ids=args.case_ids,
-                   config_path=args.config, dataset=args.dataset, dimension=args.dimension)
+                   config_path=args.config, dataset=args.dataset, dimension=args.dimension, suite=args.suite, failure_mode=args.failure_mode)
     try:
         if args.resume and not args.output_dir:
             raise ValueError("--resume requires the original --output-dir.")
@@ -242,8 +235,8 @@ if __name__ == "__main__":
         if not isinstance(settings, dict):
             raise ValueError("--settings-json must be a JSON object.")
         paths = {b: getattr(args, b + "_path") for b in BENCHMARKS if getattr(args, b + "_path")}
-        pythons = {b: getattr(args, b + "_python") or configured_path(load_config()["benchmarks"][b]["python"], executable=True)
-                   for b in BENCHMARKS if getattr(args, b + "_python") or load_config()["benchmarks"][b]["python"]}
+        pythons = {b: getattr(args, b + "_python") or configured_path(load_config()["benchmarks"][b].get("python"), executable=True)
+                   for b in BENCHMARKS if getattr(args, b + "_python") or load_config()["benchmarks"][b].get("python")}
         options["benchmark_path"] = paths.get(args.benchmark) or args.benchmark_path
         executable = pythons.get(args.benchmark)
         executable = shutil.which(executable) or executable if executable else None
