@@ -6,8 +6,7 @@ import time
 
 from jsonschema import Draft202012Validator, ValidationError
 
-from ..common import summarize_calls
-from .react import BackendUnavailable, ChatClient
+from model_client import BackendUnavailable, ChatClient, summarize_calls
 from configuration import system_settings
 
 DEFAULTS = system_settings("dsia")

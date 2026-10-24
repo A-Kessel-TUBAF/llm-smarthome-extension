@@ -1,13 +1,8 @@
 """One independent ReAct agent: model -> one tool -> observation -> model."""
 import json
-import math
-import os
 import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
-from ..common import summarize_calls
+from model_client import BackendUnavailable, ChatClient, summarize_calls
 from configuration import system_settings
 
 
@@ -31,96 +26,6 @@ For SimuHome, command or workflow acceptance alone does not establish future phy
 For Home Assistant, use the native Assist tools and their targeting instructions.
 """
 
-
-class BackendUnavailable(RuntimeError):
-    episode_timeout = False
-
-
-class ChatClient:
-    """Shared HTTP transport and model settings; no agent decisions."""
-    def __init__(self, settings=None, env_prefix="REACT", config_path=None):
-        defaults = system_settings(env_prefix.lower())
-        cfg = system_settings(env_prefix.lower(), config_path)
-        cfg["model"] = os.getenv(env_prefix + "_MODEL") or os.getenv("LLM_MODEL") or cfg["model"]
-        cfg["api_base"] = os.getenv(env_prefix + "_API_BASE") or cfg["api_base"]
-        cfg.update(settings or {})
-        unknown = set(cfg) - set(defaults)
-        if unknown:
-            raise ValueError(f"Unknown {env_prefix} settings: " + ", ".join(sorted(unknown)))
-        for name in ("max_steps", "max_llm_calls", "max_tokens", "context_window"):
-            if name in cfg and (type(cfg[name]) is not int or cfg[name] <= 0):
-                raise ValueError(name + " must be a positive integer.")
-        for name in ("request_timeout", "episode_timeout", "temperature"):
-            if not math.isfinite(cfg[name]) or cfg[name] < 0 or (name != "temperature" and not cfg[name]):
-                raise ValueError(name + " must be finite and within its allowed range.")
-        if type(cfg["seed"]) is not int or ("json_mode" in cfg and type(cfg["json_mode"]) is not bool):
-            raise ValueError("seed must be an integer and json_mode a boolean.")
-        self.settings = cfg
-        self.model = cfg["model"]
-        self.provider, separator, self.model_id = self.model.partition(":")
-        if not separator or self.provider not in {"ollama", "openai"} or not self.model_id:
-            raise ValueError("Model must be ollama:<model> or openai:<model> (also for compatible servers).")
-        default = (os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") if self.provider == "ollama"
-                   else os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
-        self.base = (cfg["api_base"] or default).rstrip("/")
-        parsed = urlsplit(self.base)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query:
-            raise ValueError("api_base must be an HTTP(S) URL without credentials or query parameters.")
-        self.key = os.getenv(env_prefix + "_API_KEY") or (os.getenv("OPENAI_API_KEY") if self.provider == "openai" else None)
-
-    def metadata(self):
-        return {"model": self.model, "api_base": self.base, "credentials": "environment only"}
-
-    def generate(self, messages, timeout=None, stop=None):
-        cfg = self.settings
-        if self.provider == "ollama":
-            path = "/api/chat"
-            body = {"model": self.model_id, "messages": messages, "stream": False,
-                    "options": {"temperature": cfg["temperature"], "seed": cfg["seed"],
-                                "num_predict": cfg["max_tokens"], "num_ctx": cfg["context_window"]}}
-            if cfg.get("json_mode", False):
-                body["format"] = "json"
-            if stop:
-                body["options"]["stop"] = stop
-        else:
-            path = "/chat/completions"
-            body = {"model": self.model_id, "messages": messages, "temperature": cfg["temperature"],
-                    "max_tokens": cfg["max_tokens"], "seed": cfg["seed"]}
-            if stop:
-                body["stop"] = stop
-            if cfg.get("json_mode", False):
-                body["response_format"] = {"type": "json_object"}
-        headers = {"Content-Type": "application/json"}
-        if self.key:
-            headers["Authorization"] = "Bearer " + self.key
-        call = {"model": self.model, "input_tokens": None, "output_tokens": None, "error": None}
-        started = time.perf_counter()
-        try:
-            request = Request(self.base + path, data=json.dumps(body, allow_nan=False).encode(), headers=headers)
-            with urlopen(request, timeout=min(cfg["request_timeout"], timeout or cfg["request_timeout"])) as response:
-                data = json.load(response)
-            if self.provider == "ollama":
-                content = data["message"]["content"]
-                call.update(input_tokens=data.get("prompt_eval_count"), output_tokens=data.get("eval_count"))
-            else:
-                content = data["choices"][0]["message"]["content"]
-                usage = data.get("usage") or {}
-                call.update(input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"))
-            if not isinstance(content, str):
-                raise ValueError("Model response has no text content.")
-            call["raw_response"] = content
-            return content, call
-        except (HTTPError, URLError, TimeoutError, OSError, KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
-            # Do not include server error bodies, request headers or API keys in logs.
-            reason = f"HTTP {exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__
-            call["error"] = f"Model endpoint unavailable or invalid response ({reason})."
-            error = BackendUnavailable(call["error"])
-            error.call = call
-            error.episode_timeout = (timeout is not None and timeout <= cfg["request_timeout"] and
-                (isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)))
-            raise error from None
-        finally:
-            call["latency_s"] = time.perf_counter() - started
 
 
 def parse_step(text):

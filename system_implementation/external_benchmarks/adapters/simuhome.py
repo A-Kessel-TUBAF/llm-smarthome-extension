@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
 from configuration import config_path as configured_path, load_config
+from model_client import retry_model_call
 
 from external_benchmarks.common import (Episode, cached_case, case_file, create_system,
     prepare_output, summarize_calls, system_report, write_json)
@@ -188,7 +189,7 @@ class Judge:
             if self.model.split(":")[0] == "qwen3":
                 messages = deepcopy(messages)
                 messages[-1].content += "\n/no_think"
-            answer = self.provider.generate(messages)
+            answer = retry_model_call(lambda: self.provider.generate(messages), call=call)
             call["raw_response"] = answer
             answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
             if not answer:
@@ -208,8 +209,13 @@ def make_judges(config):
     key = os.getenv("SIMUHOME_JUDGE_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not config["model"] or not key:
         return []
-    return [Judge(OpenAIChatProvider(model=config["model"], api_base=config["api_base"], api_key=key,
-            temperature=config["temperature"], seed=seed, timeout=config["request_timeout"], max_retries=0), seed) for seed in config["seeds"]]
+    judges = []
+    for seed in config["seeds"]:
+        provider = OpenAIChatProvider(model=config["model"], api_base=config["api_base"], api_key=key,
+            temperature=config["temperature"], seed=seed, timeout=config["request_timeout"], max_retries=0)
+        provider._client = provider._client.with_options(max_retries=0)
+        judges.append(Judge(provider, seed))
+    return judges
 
 
 def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, settings=None, system=None, config_path=None,

@@ -7,6 +7,7 @@ seed = 42
 max_tokens = 1024
 context_window = 32768
 request_timeout = 60.0
+retry_delays = [2.0, 4.0]  # Additional attempts after HTTP 500; [] disables retries.
 episode_timeout = 300.0  # ReAct/SAGE/DS-IA.
 
 [mas_models]
@@ -45,6 +46,10 @@ search_mode = "fixtures"
 
 domain_agents_enabled = true
 lean_executable = ""
+
+[assurance]
+# off: skip; record: log the audit; require: refuse Lean runs unless it passed.
+qed_leaf = "record"
 
 [react]
 max_steps = 20
@@ -87,7 +92,7 @@ tool_timeout = 120.0
 path = "../benchmark/benchmark_data.json"
 
 [judge]
-model = "qwen3:latest"
+model = "qwen3.8:27b"
 api_base = "http://127.0.0.1:11434/v1"
 temperature = 1.0
 seeds = [42, 43, 44]

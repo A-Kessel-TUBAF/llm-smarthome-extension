@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Callable
-import configuration
+from model_client import summarize_calls
 
 SYSTEMS = {"mas": "MAS", "react": "ReAct", "sage": "SAGE", "dsia": "DSIA"}
 BENCHMARKS = ("homebench", "simuhome", "homeassistant")
@@ -21,16 +21,6 @@ class Episode:
     tools: list[dict]
     invoke: Callable
     environment: object
-
-
-def summarize_calls(calls):
-    usage = {"llm_calls": len(calls), "llm_call_errors": sum(c.get("error") is not None for c in calls),
-             "calls_with_usage": sum(c.get("input_tokens") is not None and c.get("output_tokens") is not None for c in calls)}
-    for key in ("input_tokens", "output_tokens"):
-        values = [c[key] for c in calls if c.get(key) is not None]
-        usage[key] = sum(values) if values or not calls else None
-    usage["model_call_latency_s"] = sum(c.get("latency_s", 0) for c in calls)
-    return usage
 
 
 def create_system(system=None, settings=None, config_path=None):
@@ -57,7 +47,8 @@ def source_hashes():
     root = Path(__file__).parent
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(root.rglob("*.py")) if "tests" not in p.parts} | {
-                "configuration.py": hashlib.sha256(Path(configuration.__file__).read_bytes()).hexdigest()}
+                p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in (root.parent / "configuration.py", root.parent / "model_client.py")}
 
 
 def write_json(path, data):

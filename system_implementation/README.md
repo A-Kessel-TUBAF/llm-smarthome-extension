@@ -16,6 +16,7 @@ Edit **`experiment_config.toml`**. No Python edits are needed for normal runs.
 | `experiments` | System, benchmark, category, case limit, repetitions and output folder |
 | `benchmarks` | Dataset paths, Python environments and native runtime settings |
 | `judge` | SimuHome evaluation model, endpoint and seeds |
+| `assurance` | QED_LEAF audit before MAS runs with the Lean checker: `off`, `record`, `require` |
 | `runs` | MAS ablation matrix; each entry overrides only its differences |
 
 Paths in this file are relative to `system_implementation/`. A Python executable
@@ -83,6 +84,7 @@ python run_experiments.py --system mas --benchmark dexa
 | `smart_home_langgraph.py` | MAS planning, validation, scheduling and execution |
 | `agent_registry.py`, `home_defaults.py` | Default capabilities, contracts and home data |
 | `llm_config.py` | MAS model clients and usage |
+| `model_client.py` | Shared HTTP client, HTTP-500 retries and usage aggregation |
 | `run_experiments.py` | Sequential experiment processes and comparison results |
 | `run_benchmark.py` | Included DEXA execution log |
 | `external_benchmarks/` | Native benchmark adapters and independent system wrappers |

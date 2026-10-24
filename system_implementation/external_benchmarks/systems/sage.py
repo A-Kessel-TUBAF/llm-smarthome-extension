@@ -10,8 +10,7 @@ import subprocess
 from threading import Thread
 import time
 
-from ..common import summarize_calls
-from .react import BackendUnavailable, ChatClient
+from model_client import BackendUnavailable, ChatClient, summarize_calls
 from configuration import config_path as configured_path, system_settings
 
 RECOMMENDED_REVISION = "5f43df0a7de2383e4f082a69c591d56d613d1b2f"

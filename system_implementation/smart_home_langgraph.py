@@ -1,4 +1,5 @@
 import json
+import llm_config
 import re
 import argparse
 import math
@@ -18,7 +19,8 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from llm_config import configure_models, get_llm, model_for_role, summarize_calls
-from configuration import CONFIG_PATH, config_path as configured_path, system_settings
+from model_client import BackendUnavailable, retry_model_call
+from configuration import config_path as configured_path, system_settings
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
@@ -419,6 +421,17 @@ def operation_parameters(state, agent, skill, arguments):
     if entity["agent_id"] != agent or skill not in entity["skills"]:
         raise ValueError("Agent, target and method do not match.")
     return entity.get("parameters", {}).get(skill, definition["parameters"])
+
+
+def fill_service_ids(state, agent, actions):
+    """Fill only explicit routing defaults; all supplied arguments still need validation."""
+    operations = state["agent_registry"].get(agent, {}).get("operations", {})
+    for action in actions:
+        if not isinstance(action, dict) or not isinstance(action.get("arguments"), dict):
+            continue
+        schema = operations.get(action.get("skill_id"), {}).get("parameters", {}).get("service_id", {})
+        if "default" in schema:
+            action["arguments"].setdefault("service_id", deepcopy(schema["default"]))
 
 
 def relative_arguments(state, task, action):
@@ -932,12 +945,13 @@ def planner_response_schema(agents, state=None, repair=None):
 
 
 def _ask(instructions, *, role="planner", expected=None, request_id=None, response_schema=None, **context):
+    schema_state = context.pop("schema_state", None)
     simulator = SIMULATORS.get(request_id)
     if simulator is not None:
         context.update(now=simulator.now(), reference_time=simulator.reference_time, user_location=simulator.user_location)
     schema = response_schema
     if schema is None and role == "planner" and context.get("available_agents"):
-        schema = planner_response_schema(context["available_agents"], context.pop("schema_state", None), context.get("repair"))
+        schema = planner_response_schema(context["available_agents"], schema_state, context.get("repair"))
     if schema and context.get("domain_planning_only"):
         for task_schema in schema["properties"]["task_queue"]["items"]["anyOf"]:
             task_schema["properties"]["scope"]["minItems"] = 1
@@ -970,7 +984,8 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, respon
         elif schema and call["model"].startswith("openai:"):
             llm = llm.bind(response_format={"type": "json_schema", "json_schema": {"name": "mas_response", "schema": schema}})
             call.update(json_mode="schema", response_schema=schema)
-        response = llm.invoke(messages)
+        response = retry_model_call(lambda: llm.invoke(messages), call=call,
+                                    retry_delays=llm_config.MODEL_SETTINGS["model"]["retry_delays"])
         metadata, usage = response.response_metadata or {}, response.usage_metadata or {}
         call.update(raw_response=response.content, response_metadata=deepcopy(metadata), usage_metadata=deepcopy(usage),
                     input_tokens=usage.get("input_tokens", metadata.get("prompt_eval_count")),
@@ -989,6 +1004,14 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, respon
                 if isinstance(task, dict) and "scope" in task:
                     task["scope"] = _scope_ids(task["scope"])
         if schema:
+            if schema_state:
+                if role == "planner":
+                    for task in result.get("task_queue", []):
+                        if isinstance(task, dict):
+                            for field in ("actions", "requirements"):
+                                fill_service_ids(schema_state, task.get("agent_id"), task.get(field, []))
+                else:
+                    fill_service_ids(schema_state, context["agent"], result.get("actions", []))
             Draft202012Validator(schema).validate(result)
         return result
     except Exception as exc:
@@ -1301,6 +1324,7 @@ def _agent(state, agent):
                      'State values are nested in each entity.state.')
     try:
         result = _ask(instructions, role=agent, expected={"actions": list}, request_id=state["request_id"],
+                      schema_state=state,
                       response_schema=domain_response_schema(state, agent, available[agent]),
                       original_input=state["original_user_input"],
                       search_fixture_queries=list(state["simulation_data"].get("search_results", {})) if agent == "search_engine" else [],
@@ -1318,6 +1342,8 @@ def _agent(state, agent):
                       now=state["simulation_data"]["now"],
                       collaboration_allowed=not helping and (not pending if graph_mode else pending is None))
         rejected = read_rejections(result)
+    except BackendUnavailable:
+        raise
     except Exception as exc:
         if not graph_mode:
             raise
@@ -1502,6 +1528,7 @@ def collect_plans(state):
                 task["status"] = "waiting"
                 continue
             actions = response["actions"]
+            fill_service_ids(state, task["agent_id"], actions)
             Draft202012Validator({"type": "array", "items": action_schema(state, task["agent_id"],
                 get_available_agents(state)[task["agent_id"]])}).validate(actions)
             actions = [{**a, "arguments": relative_arguments(state, task, a)} for a in actions]

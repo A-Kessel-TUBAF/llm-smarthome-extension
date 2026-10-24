@@ -77,9 +77,11 @@ def main(argv=None):
             from importlib import import_module
             DEFAULTS = import_module("external_benchmarks.systems." + selected.system).DEFAULTS
             for name, default in DEFAULTS.items():
+                options = {"action": argparse.BooleanOptionalAction} if isinstance(default, bool) else {"type": type(default) if default is not None else str}
+                if isinstance(default, list):
+                    options = {"type": float, "nargs": "*"}
                 parser.add_argument("--" + name.replace("_", "-"), dest=name, default=None,
-                    **({"action": argparse.BooleanOptionalAction} if isinstance(default, bool) else
-                       {"type": type(default) if default is not None else str}))
+                                    **options)
     args = parser.parse_args(argv)
     try:
         overrides = json.loads(args.settings_json)

@@ -60,7 +60,7 @@ def build_home(session):
                         parameters[name] = {"anyOf": [definition, {"type": "null"}], "default": None}
                     else:
                         parameters[name].setdefault("default", default)
-            parameters = {"service_id": {"type": "string"}, **parameters}
+            parameters = {"service_id": {"type": "string", "enum": [domain], "default": domain}, **parameters}
             read_only = tool.annotations.read_only
             affected = all_keys if tool.integration in {"intent", "homeassistant"} else keys
             card["operations"][tool.name] = {"description": tool.description or tool.name,
