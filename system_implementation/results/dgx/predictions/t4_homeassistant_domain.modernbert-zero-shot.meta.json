@@ -1,0 +1,10 @@
+{
+  "model": "MoritzLaurer/ModernBERT-large-zeroshot-v2.0",
+  "mode": "zero-shot",
+  "device": "Tesla V100-SXM3-32GB",
+  "seed": 42,
+  "n": 95,
+  "threshold": null,
+  "hypothesis": "This smart-home request is about {}.",
+  "wall_s": 19.10395015683025
+}

@@ -1,0 +1,6 @@
+{
+  "model": "gemma4:31b",
+  "mode": "MAS end to end (agents assigned a task)",
+  "n": 100,
+  "logs": "logs/dgx/e2e/dexa"
+}

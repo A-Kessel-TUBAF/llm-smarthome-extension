@@ -1,0 +1,18 @@
+Interim end-to-end results (/home/users/vbajpai/dgx_eval/repo/system_implementation/logs/dgx/e2e)
+
+| Benchmark | Done | Main metrics | Errors | Mean latency (s) | QED_LEAF |
+|---|---|---|---|---|---|
+| dexa | 100/100 | device types: P 0.955 R 0.443 F1 0.605 (micro), F1 macro 0.598, exact set 0.250 | 23 | 43.274 | passed |
+| homebench | 1000/1000 | exact match 0.649, P 0.668 R 0.742 F1 0.703 | 49 | 37.303 | passed |
+| simuhome | 600/600 | success rate 0.417 (600 evaluated) | 227 | 332.156 | passed |
+| homeassistant | 95/95 | success rate 0.842 (95 evaluated) | 9 | 107.325 | passed |
+
+HomeBench by type:
+  multi: n=254 exact match 0.098 P 0.615 R 0.679 F1 0.645
+  normal: n=356 exact match 0.848 P 0.791 R 0.916 F1 0.849
+  unexist_attribute: n=148 exact match 0.696 P 0.656 R 0.696 F1 0.675
+  unexist_device: n=242 exact match 0.905 P 0.818 R 0.909 F1 0.861
+
+SimuHome outcomes: success: 250, Context Faithfulness Failure: 183, failed (no error type): 153, Required Actions Failure: 14
+
+Interim only: partial runs follow dataset order and are not yet representative.

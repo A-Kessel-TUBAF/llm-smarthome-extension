@@ -1,0 +1,47 @@
+{
+  "overall": {
+    "cases": 50,
+    "incomplete_cases": 0,
+    "evaluated_cases": 50,
+    "successes": 17,
+    "success_rate": 0.34,
+    "evaluation_errors": 0,
+    "pending_evaluations": 0,
+    "judge_calls": 150,
+    "judge_call_errors": 0,
+    "judge_call_latency_s": 42805.01069276873,
+    "errors": 20,
+    "runtime_errors": 0,
+    "llm_calls": 256,
+    "llm_call_errors": 1,
+    "calls_with_usage": 256,
+    "input_tokens": 1244988,
+    "output_tokens": 18549,
+    "model_call_latency_s": 8579.59533458203,
+    "mean_latency_s": 482.13535308539866
+  },
+  "by_category": {
+    "qt2/infeasible": {
+      "cases": 50,
+      "incomplete_cases": 0,
+      "evaluated_cases": 50,
+      "successes": 17,
+      "success_rate": 0.34,
+      "evaluation_errors": 0,
+      "pending_evaluations": 0,
+      "judge_calls": 150,
+      "judge_call_errors": 0,
+      "judge_call_latency_s": 42805.01069276873,
+      "errors": 20,
+      "runtime_errors": 0,
+      "llm_calls": 256,
+      "llm_call_errors": 1,
+      "calls_with_usage": 256,
+      "input_tokens": 1244988,
+      "output_tokens": 18549,
+      "model_call_latency_s": 8579.59533458203,
+      "mean_latency_s": 482.13535308539866
+    }
+  },
+  "complete": true
+}
