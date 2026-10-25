@@ -1,0 +1,132 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\begin{document}
+
+% ---------------------------------------------------------------------------
+% Table 1: End-to-end results
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{End-to-end results of Gemma~4 31B in the multi-agent system with Lean-admitted
+    command batches (QED\_LEAF audit passed). Gemma~4 via Ollama (Q4\_K\_M), thinking off,
+    temperature 0, seed 42; DGX-2 (Tesla V100 32\,GB). DEXA has no native task score: precision,
+    recall and F1 refer to the device types of the agents the system assigned a task, against the
+    device types of all required and acceptable intents. Exact match is the share of cases whose
+    output is fully correct (DEXA: identical device set; HomeBench: all commands correct).}
+  \label{tab:gemma4-e2e}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lrrrrrrrrr}
+    \toprule
+    Benchmark & Cases & Precision & Recall & F1 & Exact match & Success rate & Errors & LLM calls & Latency (s) \\
+    \midrule
+    DEXA (device types) & 100   & 0.955 & 0.443 & 0.605 & 0.250 & --    & 23  & 180   & 43.3  \\
+    HomeBench           & 1,000 & 0.668 & 0.742 & 0.703 & 0.649 & --    & 49  & 1,262 & 37.3  \\
+    SimuHome            & 600   & --    & --    & --    & --    & 0.417 & 227 & 3,167 & 332.2 \\
+    Home Assistant      & 95    & --    & --    & --    & --    & 0.842 & 9   & 311   & 107.3 \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+% ---------------------------------------------------------------------------
+% Table 2: HomeBench by instruction type
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Gemma~4 on HomeBench by instruction type (stratified sample of 1,000 test cases, seed 42).}
+  \label{tab:gemma4-homebench}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Instruction type   & $n$   & Exact match & Precision & Recall & F1    \\
+    \midrule
+    Normal             & 356   & 0.848 & 0.791 & 0.916 & 0.849 \\
+    Missing device     & 242   & 0.905 & 0.818 & 0.909 & 0.861 \\
+    Missing attribute  & 148   & 0.696 & 0.656 & 0.696 & 0.675 \\
+    Multi-step         & 254   & 0.098 & 0.615 & 0.679 & 0.645 \\
+    \midrule
+    All                & 1,000 & 0.649 & 0.668 & 0.742 & 0.703 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 3: SimuHome by query type
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Gemma~4 success rate on SimuHome by query type (50 episodes per cell). QT1 and all
+    infeasible episodes are judged by a three-vote LLM panel (Gemma~4 31B, 49,152-token context;
+    1,008 judge calls, no errors or truncated prompts).}
+  \label{tab:gemma4-simuhome}
+  \begin{tabular}{lrrr}
+    \toprule
+    Query type & Feasible & Infeasible & All   \\
+    \midrule
+    QT1        & 0.82     & 0.80       & 0.81  \\
+    QT2        & 0.42     & 0.34       & 0.38  \\
+    QT3        & 0.42     & 0.80       & 0.61  \\
+    QT4-1      & 0.26     & 0.26       & 0.26  \\
+    QT4-2      & 0.44     & 0.02       & 0.23  \\
+    QT4-3      & 0.40     & 0.02       & 0.21  \\
+    \midrule
+    All        & 0.460    & 0.373      & 0.417 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 4: Home Assistant by domain
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Gemma~4 success rate on the Home Assistant Assist dataset by device domain.}
+  \label{tab:gemma4-homeassistant}
+  \begin{tabular}{lrr}
+    \toprule
+    Domain        & $n$ & Success rate \\
+    \midrule
+    Cover         & 11  & 1.00 \\
+    Fan           & 6   & 1.00 \\
+    Light         & 13  & 0.69 \\
+    Lock          & 9   & 0.67 \\
+    Media player  & 21  & 0.86 \\
+    To-do list    & 9   & 1.00 \\
+    Vacuum        & 17  & 0.71 \\
+    Valve         & 9   & 1.00 \\
+    \midrule
+    All           & 95  & 0.842 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 5: Classification tasks
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{Gemma~4 on one classification task per benchmark (zero-shot, thinking off,
+    temperature 0). Macro-averaged precision, recall and F1; 95\% bootstrap confidence interval
+    for macro-F1 (1,000 resamples). T1 also lists the end-to-end system's device types.}
+  \label{tab:gemma4-classification}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llrrrrrcr}
+    \toprule
+    Task & Setting & $n$ & Accuracy & Precision & Recall & F1 & 95\% CI (F1) & s/item \\
+    \midrule
+    T1 DEXA device types (8, multi-label)   & zero-shot  & 100   & 0.640 & 0.962 & 0.870 & 0.909 & [0.879, 0.935] & 1.79  \\
+    T1 DEXA device types (8, multi-label)   & end to end & 100   & 0.250 & 0.956 & 0.452 & 0.598 & [0.526, 0.660] & 43.27 \\
+    T2 HomeBench validity (3 classes)       & zero-shot  & 1,500 & 0.873 & 0.890 & 0.873 & 0.872 & [0.856, 0.888] & 8.66  \\
+    T3 SimuHome feasibility (2 classes)     & zero-shot  & 600   & 0.592 & 0.607 & 0.592 & 0.577 & [0.537, 0.616] & 4.26  \\
+    T4 Home Assistant domain (8 classes)    & zero-shot  & 95    & 1.000 & 1.000 & 1.000 & 1.000 & [1.000, 1.000] & 1.40  \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+\end{document}

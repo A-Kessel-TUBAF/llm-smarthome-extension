@@ -1,0 +1,131 @@
+{
+  "qed_leaf_revision": "9262eb0b3a175f4a3bd1b44c2dccdcd435817718",
+  "lean": "Lean (version 4.33.1, x86_64-w64-windows-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+  "policy_permitted_axioms": [
+    "propext",
+    "Quot.sound"
+  ],
+  "versions": [
+    {
+      "version": "current",
+      "label": "Current proofs (after the fix)",
+      "plain_lean": {
+        "compiles": true,
+        "axioms": {
+          "checkAllocation_sound": [
+            "propext",
+            "Quot.sound"
+          ],
+          "checkAllocation_complete": [
+            "propext",
+            "Quot.sound"
+          ],
+          "GraphWF.acyclic": [
+            "propext",
+            "Quot.sound"
+          ]
+        }
+      },
+      "qed_leaf": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "version": "pre_fix",
+      "label": "Upstream proofs before the fix",
+      "plain_lean": {
+        "compiles": true,
+        "axioms": {
+          "checkAllocation_sound": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "checkAllocation_complete": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "GraphWF.acyclic": [
+            "propext",
+            "Quot.sound"
+          ]
+        }
+      },
+      "qed_leaf": {
+        "status": "failed",
+        "failed_checks": [
+          [
+            "checkAllocation_complete",
+            "axiom-policy"
+          ],
+          [
+            "checkAllocation_sound",
+            "axiom-policy"
+          ]
+        ]
+      }
+    },
+    {
+      "version": "weakened_statement",
+      "label": "Negative control: weakened theorem statement",
+      "plain_lean": {
+        "compiles": true,
+        "axioms": {
+          "checkAllocation_sound": [
+            "propext",
+            "Quot.sound"
+          ],
+          "checkAllocation_complete": [
+            "propext",
+            "Quot.sound"
+          ],
+          "GraphWF.acyclic": [
+            "propext",
+            "Quot.sound"
+          ]
+        }
+      },
+      "qed_leaf": {
+        "status": "failed",
+        "failed_checks": [
+          [
+            "checkAllocation_sound",
+            "statement-match"
+          ]
+        ]
+      }
+    },
+    {
+      "version": "weakened_definition",
+      "label": "Negative control: weakened independence definition",
+      "plain_lean": {
+        "compiles": true,
+        "axioms": {
+          "checkAllocation_sound": [
+            "propext",
+            "Quot.sound"
+          ],
+          "GraphWF.acyclic": [
+            "propext",
+            "Quot.sound"
+          ]
+        }
+      },
+      "qed_leaf": {
+        "status": "failed",
+        "failed_checks": [
+          [
+            "acyclic",
+            "definition-hole"
+          ],
+          [
+            "checkAllocation_sound",
+            "definition-hole"
+          ]
+        ]
+      }
+    }
+  ]
+}
