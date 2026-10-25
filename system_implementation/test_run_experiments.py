@@ -18,12 +18,15 @@ class BenchmarkSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(run_experiments.subprocess, "run",
                 return_value=SimpleNamespace(returncode=0)) as run:
             rows = run_experiments.run_experiments(benchmark="all", runs=runs, output_dir=run_experiments.Path(tmp) / "out", timestamped=False)
-        self.assertEqual([(r["benchmark"], r["run"]) for r in rows],
-                         [("dexa", "mas"), ("homebench", "mas"), ("homebench", "react"), ("simuhome", "mas"),
-                          ("simuhome", "react"), ("homeassistant", "mas"), ("homeassistant", "react")])
+        self.assertEqual(sorted((r["benchmark"], r["run"]) for r in rows),
+                         sorted([("dexa", "mas"), ("homebench", "mas"), ("homebench", "react"), ("simuhome", "mas"),
+                                 ("simuhome", "react"), ("homeassistant", "mas"), ("homeassistant", "react")]))
+        self.assertEqual(rows[0]["benchmark"], "dexa")  # the included benchmark runs first
         dexa = run.call_args_list[0].args[0]
         self.assertEqual(dexa[dexa.index("--benchmark") + 1], "dexa")
-        self.assertNotIn("--benchmark-path", dexa)
+        # The matrix runs the extended DEXA edition, whose path the runner passes explicitly.
+        self.assertEqual(dexa[dexa.index("--dataset") + 1], "extended")
+        self.assertTrue(dexa[dexa.index("--benchmark-path") + 1].endswith("extension_tasks.json"))
 
     def test_configured_python_path_matches_child_sys_executable(self):
         # The child compares its sys.executable with this path; `..` would make them differ.

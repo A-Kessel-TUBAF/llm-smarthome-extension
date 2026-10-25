@@ -1776,8 +1776,11 @@ def check_allocation(state, batch, snapshot=None):
     keys = {aid: op_key(aid, a) for aid, a in actions.items()}
     op_keys = sorted(set(keys.values()), key=repr)
     op_ids = {key: i for i, key in enumerate(op_keys)}
-    dev_ids = {name: i for i, name in enumerate(sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home}
-                                                       | ({home_device} if home_actions else set())))}
+    known = sorted(set(entities) | {k.rsplit('.', 1)[0] for k in home} | ({home_device} if home_actions else set()))
+    # Targets outside the home (e.g. hallucinated devices) get IDs without a catalogue entry,
+    # so the checker rejects their commands instead of the projection failing with a KeyError.
+    targets = {target_of(a["arguments"]) for a in actions.values()}
+    dev_ids = {name: i for i, name in enumerate(known + sorted(targets - set(known)))}
     attrs = sorted({k.rsplit('.', 1)[-1] for k in home} | {"__target__"} | set(block.values()) | {
         k.rsplit('.', 1)[-1] for card in registry.values() for d in card["operations"].values()
         for k in d["reads"] + d["writes"] + [c["state"] for c in d["preconditions"] if "state" in c]})

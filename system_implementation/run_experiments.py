@@ -114,7 +114,7 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
     if timestamped:
         output /= datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     output.mkdir(parents=True, exist_ok=resume)
-    benchmarks = ("dexa", *BENCHMARKS) if benchmark == "all" else (benchmark,)
+    benchmarks = BENCHMARKS if benchmark == "all" else (benchmark,)
     configured = load_config()["benchmarks"]
     paths = {b: os.getenv({"dexa": "DEXA_PATH", "homebench": "HOMEBENCH_PATH", "simuhome": "SIMUHOME_PATH", "homeassistant": "HOMEASSISTANT_DATASET_PATH"}[b])
              or configured_path("../benchmark/benchmark_data.json" if b == "dexa" and dataset == "original"
