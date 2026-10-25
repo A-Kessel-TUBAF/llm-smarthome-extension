@@ -12,7 +12,7 @@ from pathlib import Path
 
 from external_benchmarks.common import SYSTEMS, write_json
 from configuration import CONFIG_PATH, activate_config, config_path as configured_path, load_config, system_settings
-from run_benchmark import DIMENSIONS
+from run_benchmark import DIMENSIONS, SUITES
 
 ROOT = Path(__file__).resolve().parent
 BENCHMARKS = ("dexa", "simuhome", "homeassistant", "homebench")
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--case-id", dest="case_ids", action="append", default=[])
     parser.add_argument("--dataset", choices=("original", "extended", "extension", "all"), default=None,
                         help="DEXA: untouched original or revised extended edition (default)")
-    parser.add_argument("--suite", choices=("all", "core", "robustness"), default="all")
+    parser.add_argument("--suite", choices=SUITES, default="all")
     parser.add_argument("--failure-mode", choices=("none", "transient", "unavailable", "no_effect", "state_changed"))
     parser.add_argument("--dimension", choices=DIMENSIONS, help="Filter DEXA extension cases")
     parser.add_argument("--system", default=defaults["system"] or None, help="mas, react, sage, dsia, module:factory, or a legacy MAS Python file")

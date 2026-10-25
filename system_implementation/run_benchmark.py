@@ -20,7 +20,8 @@ from benchmark.complexity import complexity
 from benchmark.environment import Session
 from benchmark.evaluation import evaluate
 
-DIMENSIONS = ('dependency_structure','ambiguity','scale','concurrency','failure_recovery')
+DIMENSIONS = ('dependency_structure','ambiguity','scale','concurrency','failure_recovery','safety')
+SUITES = ('all','core','robustness','qed_leaf')
 FAILURES = ('none','transient','unavailable','no_effect','state_changed')
 
 
@@ -115,7 +116,7 @@ def run_original(cases, output, system, settings):
 def run_benchmark(category='all', benchmark_path=None, *, system=None, config_path=None,
                   limit=0, case_ids=(), output_dir=None, dataset='extended', dimension=None,
                   suite='all', failure_mode=None, resume=False, **settings):
-    if limit<0 or suite not in {'all','core','robustness'} or failure_mode not in (None,*FAILURES):
+    if limit<0 or suite not in SUITES or failure_mode not in (None,*FAILURES):
         raise ValueError('Invalid limit/suite/failure selection.')
     activate_config(config_path)
     if benchmark_path is None and dataset!='original':
@@ -165,7 +166,7 @@ def run_benchmark(category='all', benchmark_path=None, *, system=None, config_pa
         injected=session.injections[0]['sequence'] if session.injections else None
         row={'id':case['id'],'input':case['user_input'],'category':case['category'],'dimension':case.get('dimension','original'),
             'suite':case['suite'],'pair_id':case.get('pair_id'),'failure_mode':case.get('injected_failure',{}).get('mode','none'),
-            'complexity':case['complexity'],'expected_behavior':case['expected_behavior'],'completed':evaluation['score'] in (0,1),
+            'complexity':case['complexity'],'expected_behavior':case['expected_behavior'],'safety':case.get('safety'),'completed':evaluation['score'] in (0,1),
             'latency_s':elapsed,'report':report,'model_usage':usage(report),'initial_state':session.initial,'final_state':session.state,
             'tool_calls':session.calls,'injections':session.injections,
             'injection_status':'triggered' if injected else 'not_triggered' if session.fault else 'not_requested',
@@ -189,7 +190,7 @@ if __name__=='__main__':
     parser.add_argument('benchmark_path',nargs='?')
     parser.add_argument('--dataset',choices=('original','extended','extension','all'),default='extended')
     parser.add_argument('--system',default='mas')
-    parser.add_argument('--suite',choices=('all','core','robustness'),default='all')
+    parser.add_argument('--suite',choices=SUITES,default='all')
     parser.add_argument('--failure-mode',choices=FAILURES)
     parser.add_argument('--dimension',choices=DIMENSIONS)
     parser.add_argument('--case-id',dest='case_ids',action='append',default=[])

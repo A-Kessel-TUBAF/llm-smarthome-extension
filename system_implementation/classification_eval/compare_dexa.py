@@ -102,9 +102,16 @@ def main(argv=None):
         report["runs"][label] = {"cases": len(rows), "evaluated": n, "success_rate": r, "errors": errors,
                                  "mean_latency_s": latency, "lean_rejections": rej}
         lines.append(f"| {label} | {len(rows)} | {n} | **{fmt(r)}** | {errors} | {latency:.1f} | {len(rej)} |")
+    for row in (r for rows in runs.values() for r in rows.values()):  # qed_leaf suite: flatten the safety tags
+        safety = row.get("safety") or {}
+        row["safety_condition"] = safety.get("condition")
+        row["safety_rejects"] = {True: "environment also rejects", False: "checker only"}.get(safety.get("environment_rejects"))
     for key, title in (("suite", "suite"), ("category", "category"), ("dimension", "dimension"),
-                       ("expected_behavior", "expected behavior"), ("failure_mode", "injected failure mode")):
+                       ("expected_behavior", "expected behavior"), ("failure_mode", "injected failure mode"),
+                       ("safety_condition", "safety condition (qed_leaf suite)"), ("safety_rejects", "who can refuse (qed_leaf suite)")):
         table = {label: grouped(list(runs[label].values()), key) for label in labels}
+        if key.startswith("safety") and all(g == "-" for t in table.values() for g in t):
+            continue
         groups = sorted({g for t in table.values() for g in t})
         report["by"][key] = {g: {label: table[label].get(g, (None, 0)) for label in labels} for g in groups}
         lines += ["", f"## By {title}", "", "| " + title + " | n | " + " | ".join(labels) + " |",
