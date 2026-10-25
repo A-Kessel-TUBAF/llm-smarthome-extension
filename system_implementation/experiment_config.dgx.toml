@@ -1,5 +1,7 @@
 # DGX-2 runs with Gemma 4 (see results/dgx). Same as experiment_config.toml except [model] and
 # [judge]. Ollama runs one server per GPU on ports 11500-11507; set OLLAMA_BASE_URL per process.
+# Start every server with OLLAMA_VULKAN=0: with Vulkan on, Ollama sees all 16 GPUs, ignores
+# CUDA_VISIBLE_DEVICES and aborts loading the 31B model (GGML_SCHED_MAX_BACKENDS).
 [model]
 model = "ollama:gemma4:31b"
 api_base = ""

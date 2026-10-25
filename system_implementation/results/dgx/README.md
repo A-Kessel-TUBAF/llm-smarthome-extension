@@ -115,6 +115,8 @@ as better only if the 95% CI excludes 0):
 ## 4. Caveats
 
 - **One run per setting:** temperature 0, seed 42; Gemma 4 quantized to Q4_K_M; thinking off.
+- **Ollama on the DGX-2** must be started with `OLLAMA_VULKAN=0`; otherwise it enumerates all 16 GPUs
+  through Vulkan, ignores `CUDA_VISIBLE_DEVICES`, and the 31B model fails to load.
 - **SimuHome judge.** Gemma 4 31B judges Gemma 4's own answers (3 votes, 49,152-token context;
   1,008 calls, 0 errors, 0 truncated prompts). The project default judge (gemma2, 8,192 tokens)
   cannot read the ~28,000-token judge prompts. A first run with it scored every answer B; it was
