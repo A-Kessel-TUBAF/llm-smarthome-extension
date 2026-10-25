@@ -1,0 +1,2 @@
+# Standalone HomeBench + ReAct; no LangChain, LangGraph, torch or MAS dependencies.
+jsonschema>=4.23,<5

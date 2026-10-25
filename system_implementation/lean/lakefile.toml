@@ -1,0 +1,17 @@
+name = "allocation_checker"
+version = "0.1.0"
+defaultTargets = ["AllocationChecker", "AllocationAudit", "allocation_checker"]
+
+# Specification, checker, proofs and kernel-checked examples (imports only Init).
+[[lean_lib]]
+name = "AllocationChecker"
+
+# Axiom audit: fails the build on any non-permitted axiom.
+[[lean_lib]]
+name = "AllocationAudit"
+roots = ["AllocationChecker.Audit"]
+
+# Runtime executable (JSON boundary + IO; outside the soundness theorem).
+[[lean_exe]]
+name = "allocation_checker"
+root = "Main"

@@ -1,0 +1,25 @@
+{
+  "model": "answerdotai/ModernBERT-large",
+  "mode": "finetune",
+  "device": "Tesla V100-SXM3-32GB",
+  "seed": 42,
+  "n": 12952,
+  "train_n": 102819,
+  "valid_n": 3000,
+  "history": [
+    {
+      "epoch": 1,
+      "valid_f1_macro": 0.935105344865824
+    },
+    {
+      "epoch": 2,
+      "valid_f1_macro": 0.935105344865824
+    }
+  ],
+  "epochs": 2,
+  "lr": 2e-05,
+  "batch_size": 4,
+  "accumulation": 8,
+  "max_length": 1472,
+  "wall_s": 19072.054195699282
+}

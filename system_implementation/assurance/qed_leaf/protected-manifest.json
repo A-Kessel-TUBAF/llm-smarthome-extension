@@ -1,0 +1,10 @@
+{
+  "created_at": "2026-10-22T07:58:57.700751+00:00",
+  "protected_digest": "sha256:047d996353c43efa0a302ccc7dab74c47f73ee0109974037d3360acbec140c12",
+  "files": {
+    "AllocationChecker/Check.lean": "sha256:cffce629a1efe31ebacf133455db3dbdcd08be41a1e3481232509af4ce700453",
+    "AllocationChecker/Spec.lean": "sha256:269cb7a190475f229981418e4f981d6b3810447d24bbb380d27dde8836def061",
+    "AllocationChecker/Statements.lean": "sha256:14bbe9f51b1227780741e8ca9ee356e94f35ea5c97085216536da3441296493a",
+    "AllocationChecker/Types.lean": "sha256:0c530a6d63039a86a24c071f4ef5592b72dd752a321008ad57193bf58ebfb29a"
+  }
+}

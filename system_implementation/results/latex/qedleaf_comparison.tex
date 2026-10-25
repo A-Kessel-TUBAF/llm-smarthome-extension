@@ -1,0 +1,91 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\begin{document}
+
+% ---------------------------------------------------------------------------
+% Plain Lean vs. QED_LEAF on four versions of the allocation-checker proofs
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{Plain Lean vs.\ QED\_LEAF on four versions of the allocation-checker proofs.
+    Plain Lean accepts every version; only QED\_LEAF rejects the three flawed ones.
+    QED\_LEAF policy: targets \texttt{checkAllocation\_sound}, \texttt{checkAllocation\_complete}
+    and \texttt{GraphWF.acyclic}, compared against a protected reference specification;
+    permitted axioms \texttt{propext} and \texttt{Quot.sound}. QED\_LEAF revision 9262eb0
+    (analyzer), Lean~4.33.1.}
+  \label{tab:qedleaf-evidence}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lllll}
+    \toprule
+    Proof version & Change & Plain Lean & QED\_LEAF & Failed checks \\
+    \midrule
+    Upstream, before the fix
+      & one \texttt{simp} step reaches \texttt{Classical.choice}
+      & compiles & \textbf{failed}
+      & axiom-policy (soundness, completeness) \\
+    Current, after the fix
+      & \texttt{beq\_iff\_eq.mpr} instead of \texttt{simp}
+      & compiles & \textbf{passed} (24/24 checks)
+      & none \\
+    Negative control 1
+      & weaker theorem under the name \texttt{checkAllocation\_sound}
+      & compiles & \textbf{failed}
+      & statement-match (soundness) \\
+    Negative control 2
+      & independence definition without the exclusive-resource condition
+      & compiles & \textbf{failed}
+      & definition-hole (soundness, acyclicity) \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+% ---------------------------------------------------------------------------
+% Axioms of the main theorems (plain Lean, #print axioms)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Axioms of the soundness and completeness theorems as reported by Lean. Plain Lean
+    accepts both versions; QED\_LEAF's axiom policy permits only \texttt{propext} and
+    \texttt{Quot.sound}.}
+  \label{tab:qedleaf-axioms}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lll}
+    \toprule
+    Proof version & Axioms & QED\_LEAF axiom-policy \\
+    \midrule
+    Upstream, before the fix & \texttt{Classical.choice}, \texttt{propext}, \texttt{Quot.sound} & failed \\
+    Current, after the fix   & \texttt{propext}, \texttt{Quot.sound}                           & passed \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Effect on the benchmark runs
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Effect of the QED\_LEAF audit on the benchmark runs. The audit checks the proofs
+    before a run and is not part of request handling.}
+  \label{tab:qedleaf-runtime}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lll}
+    \toprule
+    Aspect & Without QED\_LEAF & With QED\_LEAF \\
+    \midrule
+    Task scores                     & unchanged                    & unchanged \\
+    Time per case                   & unchanged                    & unchanged \\
+    One-time audit                  & --                           & about 3.5\,min (CPU) \\
+    Later runs, same Lean sources   & --                           & cached result, no new audit \\
+    Flawed proofs (Table~\ref{tab:qedleaf-evidence}) & accepted     & rejected \\
+    Mode \texttt{require}           & --                           & refuses Lean runs unless the audit passed \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\end{document}

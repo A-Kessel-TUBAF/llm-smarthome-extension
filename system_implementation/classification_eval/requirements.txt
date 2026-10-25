@@ -1,0 +1,8 @@
+# Separate environment (.venv-clf), not the MAS environment. V100 GPUs (DGX-2, sm_70) need a torch
+# build with Volta kernels; torch 2.14.1+cu126 has none, 2.8.0+cu126 works (checked on the DGX-2):
+#   uv pip install --python .venv-clf/bin/python "torch==2.8.0" --index-url https://download.pytorch.org/whl/cu126
+torch
+transformers>=4.56
+numpy
+scikit-learn  # only for the metric cross-check in test_classification_eval.py
+pytest

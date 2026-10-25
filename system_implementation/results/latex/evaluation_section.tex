@@ -1,0 +1,513 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+
+% Standalone draft of Sections 3.2-3.5 (additions), 4 and 5 for the DEXA paper. In the paper,
+% drop the preamble and the bibliography and paste the sections; table labels stay valid.
+% Numbers: results/dgx on branch QED_LEAF of vaibhav-baj/llm-smarthome-extension (runs of
+% 23-25 October 2026). Rows marked "pending" are still running.
+
+\begin{document}
+
+\title{Draft: system description, benchmark and evaluation}
+\date{}
+\maketitle
+
+% =============================================================================
+\section{LLM-based multi-agent system (Sections~3.2--3.5)}
+% =============================================================================
+
+\subsection{Current system}
+\label{sec:current-system}
+
+The current system keeps the two-level design of the original architecture, centralized planning
+and device-level execution, and adds five mechanisms around it. (1)~Every device agent publishes
+an \emph{agent card}: for each operation it offers, the card declares the parameters with their
+types, ranges and defaults, the state variables the operation reads and writes, its preconditions
+and its postconditions. The cards are the single source of truth for planning, validation, the
+allocation checker and the external benchmark adapters. (2)~Tasks carry explicit dependencies, so
+independent tasks run in parallel and dependent ones wait for verified results. (3)~Every planned
+action is validated against its card before dispatch and its outcome is checked against the
+observed home state afterwards. (4)~Failures are repaired locally where possible and replanned
+otherwise. (5)~A batch of commands executes only if the formally verified allocation checker of
+Section~\ref{sec:lean} admits it. All five can be switched off individually, which gives the
+ablations of Section~\ref{sec:evaluation}. The execution loop is: intent analysis (optional),
+task planning, domain planning by the device agents, plan validation, admission and scheduling of
+one round of independent commands, execution with outcome checks, and completion of the round,
+repeated until every task is finished or terminally failed.
+
+\subsection{Task planning}
+\label{sec:task-planning}
+
+The task planner receives the user request, the agent cards reduced to their operations and
+preconditions, the rooms, the current public state and, when enabled, the intent analysis. It
+returns a task queue in which every task names its agent, a plain-language goal, the devices or
+rooms it may touch (\emph{scope}), its constraints (times, quantities, conditions, negation) and
+the tasks it depends on. A task may already contain concrete actions, otherwise the device agent
+refines it. Sub-requests that cannot be fulfilled with the available devices are listed as
+rejected rather than planned. The planner is instructed to plan the entire request as one task
+per distinct goal and to use only agent and device identifiers from the cards; a plan that names
+an unknown agent, duplicates a task identifier or contains a dependency cycle is rejected and the
+planner is asked once more with the error as context. The device agents then turn each task into
+concrete operations from their own card, declaring which earlier results an argument is taken
+from (\emph{argument sources}); \texttt{validate\_plan} resolves these references, inserts
+explicitly approved prerequisite operations (for example switching a device on when a
+precondition requires it) and rejects plans with contradictory goals on the same device.
+
+\subsection{Dynamic collaboration mechanism}
+\label{sec:collaboration}
+
+Collaboration is no longer a free-form message between agents. An agent that needs information
+owned by another device declares an \emph{information task} with the owning agent as its
+parent, or references a predecessor's output field as an argument source. Both become edges of
+the dependency graph, so the scheduler orders them, the verified result of the predecessor is
+passed on with its observation time and version, and the allocation checker refuses to run a
+dependent command whose evidence has expired or whose source state has changed since it was
+observed (Section~\ref{sec:lean}, condition~3). Results of completed tasks remain available to
+later tasks through the shared task history, which preserves the implicit information reuse of
+the original system. When a device agent cannot complete a task, repair is local first: only the
+actions that depend on the failed one, by task dependency or by reading a state variable it
+writes, are skipped and replanned by that agent (the soundness of this rule is proved in
+\texttt{Repair.lean}); a failure that crosses agents is handed back to the task planner, which
+replans the affected tasks only, preserving their identifiers and goals.
+
+\subsection{Formally verified allocation checking: auditing the proofs}
+\label{sec:lean}
+
+% (The existing Section 3.5 text stays as it is; this paragraph is appended after
+%  "... implemented in Python and not verified.")
+That the proofs compile is not by itself evidence that the stated theorems hold: the Lean
+compiler accepts any valid proof of any theorem, and it does not know which theorem was intended,
+which axioms a project permits, or whether a definition behind an unchanged statement has been
+weakened. We therefore audit the proofs with QED\_LEAF, a fail-closed checker for Lean
+developments that re-elaborates the targets and compares them with a protected copy of the
+specification. For each target theorem it checks that the proof contains no unproven step
+(\texttt{sorry}), that the statement is structurally identical to the protected reference
+(statement match), that every definition the statement depends on is restated identically
+(definition integrity), that only the permitted axioms \texttt{propext} and \texttt{Quot.sound}
+are used (axiom policy), and that the theorem does not hold vacuously. The audit runs before
+every evaluation that uses the checker and its outcome is recorded with the run. It takes about
+3.5 minutes on a CPU, is cached while the Lean sources, policy and reference are unchanged, and
+is not part of request handling, so task scores and latency are unaffected.
+
+Table~\ref{tab:qedleaf-evidence} contrasts the audit with compilation alone on four versions of
+the proofs. All four compile. The audit passes only the current version; it rejects an earlier
+version whose soundness and completeness proofs depended on \texttt{Classical.choice} through a
+single \texttt{simp} step, a policy violation that compilation had not surfaced
+(Table~\ref{tab:qedleaf-axioms}), and it rejects two deliberately weakened versions, one with a
+weaker theorem published under the protected name and one with an independence definition that
+drops the exclusive-resource condition. Like the checker's guarantees, the audit covers only the
+Lean development; the Python translation remains outside its scope.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Compilation alone vs.\ the QED\_LEAF audit on four versions of the allocation-checker
+    proofs (both with Lean~4.33.1; QED\_LEAF analyzer revision 9262eb0). Every version compiles;
+    only the audit rejects the three flawed ones. Audit targets:
+    \texttt{checkAllocation\_sound}, \texttt{checkAllocation\_complete} and
+    \texttt{GraphWF.acyclic}, compared against a protected reference specification; permitted
+    axioms \texttt{propext} and \texttt{Quot.sound}.}
+  \label{tab:qedleaf-evidence}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llcll}
+    \toprule
+    Proof version & Change & Compiles & QED\_LEAF audit & Failed checks \\
+    \midrule
+    Upstream, before the fix & one \texttt{simp} step reaches \texttt{Classical.choice} & yes & \textbf{failed} & axiom policy (soundness, completeness) \\
+    Current, after the fix   & \texttt{beq\_iff\_eq.mpr} instead of \texttt{simp}        & yes & \textbf{passed} (24/24 checks) & none \\
+    Negative control 1       & weaker theorem under the name \texttt{checkAllocation\_sound} & yes & \textbf{failed} & statement match (soundness) \\
+    Negative control 2       & independence definition without the exclusive-resource condition & yes & \textbf{failed} & definition integrity (soundness, acyclicity) \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Axioms of the soundness and completeness theorems as reported by Lean
+    (\texttt{\#print axioms}). Both versions compile; the audit's axiom policy permits only
+    \texttt{propext} and \texttt{Quot.sound}.}
+  \label{tab:qedleaf-axioms}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llc}
+    \toprule
+    Proof version & Axioms & Axiom policy \\
+    \midrule
+    Upstream, before the fix & \texttt{Classical.choice}, \texttt{propext}, \texttt{Quot.sound} & failed \\
+    Current, after the fix   & \texttt{propext}, \texttt{Quot.sound}                           & passed \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+% =============================================================================
+\section{Benchmark}
+\label{sec:benchmark}
+% =============================================================================
+
+The revised edition of our benchmark contains 127 scenarios: a \emph{core} suite of 104 and a
+\emph{robustness} suite of 23. The core suite keeps 57 of the 60 original cases, revised where
+their annotations were ambiguous (three cases with subjective scene assumptions were dropped and
+one replaced), and adds 40 cases designed along four dimensions that the original set hardly
+covers: dependency structure (chains, fan-out, fan-in and conditional branches of depth up to
+three; 15 cases), ambiguity (vague requests with several acceptable interpretations; 9),
+scale (five to eight intents across up to seven device types; 8) and concurrency
+(contradictory or parallelizable requests for the same devices; 8). Fourteen further cases are
+\emph{variants} of existing ones that change the home state (a busy calendar, an empty fridge,
+rain) so that the correct action differs although the request is the same. Each case carries a
+complexity vector (number of intents and device types, dependency depth and width, ambiguity,
+temporal and spatial constraints, conflicts) and an \emph{expected behavior}: 101 cases must be
+executed, and 26 require a focused clarification question about an unresolved part of the
+request while the clear, independent goals are still carried out. The robustness suite injects
+device failures into 16 scenarios, each with an unperturbed control: a device is unavailable
+(11), answers only after a transient failure (5), reports success without effect (1), or its
+state is changed externally after planning (1). A correct response completes the independent
+goals, reports the failure truthfully, replans dependent goals instead of executing them with
+missing information, and, for transient failures, recovers the requested goal.
+
+Every case runs in a fresh simulated home with versioned initial values, a virtual clock and
+synthetic catalogues for media, recipes and search results, and is scored automatically: there
+is no manual Complete/Partial/Failed step and no LLM judge. The evaluator checks the required
+end-state predicates, that information goals rest on an actual recorded observation, that result
+dependencies were satisfied before dependent calls, that nothing outside the allowed changes was
+written, that existing calendar entries and list items were preserved, that scheduled effects
+ran at the right virtual time with the right arguments, and, for clarification cases, that a
+question was asked and the unresolved parts were left untouched. Free-text answers are checked
+lexically against published term lists, which is deliberately weak but judge-free; the binary
+score therefore means ``passed the published deterministic checks''. The benchmark exposes one
+episode interface (request, public context, tool schemas, an \texttt{invoke} function) that every
+compared system uses, so no system sees gold goals, failure labels or annotations. The original
+60-case edition remains available unchanged for comparison with earlier results.
+
+% =============================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+% =============================================================================
+
+All experiments use Gemma~4 31B~\cite{gemma4} served locally through Ollama (4-bit quantization,
+Q4\_K\_M) with thinking disabled, temperature 0 and seed 42, on a DGX-2 with Tesla V100 (32\,GB)
+GPUs. Two systems are compared with the same model: our multi-agent system (MAS) with every
+mechanism of Section~\ref{sec:current-system} enabled and the Lean checker admitting every
+command batch (the QED\_LEAF audit passed before every such run), and a single ReAct
+agent~\cite{react} that receives the same episode interface and tools. We evaluate on our
+extended benchmark (Section~\ref{sec:eval-own}), the 95 cases of the Home Assistant Assist
+dataset (Section~\ref{sec:eval-ha}), the 600 episodes of SimuHome (Section~\ref{sec:eval-simuhome})
+and a stratified sample of 1,000 HomeBench test instructions drawn proportionally to instruction
+type with seed 42 (Section~\ref{sec:eval-homebench}). Each benchmark is scored by its native
+evaluator. Table~\ref{tab:systems} summarizes the results.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Both systems with the same Gemma~4 31B on four benchmarks. Success rates are each
+    benchmark's native binary score; HomeBench reports exact match and operation-level F1.
+    The MAS runs with the Lean checker; ReAct has no admission step. ``pending'' = run in progress.}
+  \label{tab:systems}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llrrrrr}
+    \toprule
+    Benchmark & Metric & Cases & MAS + Lean & ReAct & Difference (MAS $-$ ReAct) & 95\% CI \\
+    \midrule
+    DEXA extended (core + robustness) & success rate & 127 & 0.291 & \textbf{0.543} & $-0.252$ & $[-0.354, -0.150]$ \\
+    Home Assistant Assist             & success rate & 95  & 0.842 & 0.863 & $-0.021$ & n.s.\ (2 cases) \\
+    SimuHome                          & success rate & 600 & 0.417 & pending & -- & -- \\
+    HomeBench                         & exact match / F1 & 1,000 & 0.649 / 0.703 & pending & -- & -- \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+% -----------------------------------------------------------------------------
+\subsection{Own benchmark}
+\label{sec:eval-own}
+% -----------------------------------------------------------------------------
+
+On the extended benchmark the MAS passes 37 of 127 cases (0.291) and the ReAct agent 69 (0.543);
+on the 127 shared cases the difference of $-0.252$ has a 95\% bootstrap confidence interval of
+$[-0.354, -0.150]$, so with this model the single agent is better. Table~\ref{tab:dexa-breakdown}
+locates the difference. It lies entirely in the core suite and grows with complexity: on simple
+cases the gap is 0.20, on moderate and complex cases 0.30. By dimension it is largest where the
+MAS's explicit structure should help most, on dependency chains (0.13 against 0.67), and absent on
+ambiguity. On the robustness suite the two systems tie at 0.348, and the MAS is the only one that
+recovers from transient device failures (0.40 against 0.00) and the one \emph{no-effect} case,
+which is what its outcome checks and local repair are designed for. Both systems handle the 26
+clarification cases poorly (0.15 and 0.19). The MAS ended 17 cases with a system error, the ReAct
+agent none. The allocation checker rejected no batch in any of the 127 cases: every batch the
+planner proposed was valid, so the checker neither cost nor gained a case here.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Extended benchmark: success rate by suite, category, dimension and expected behavior
+    (same model; automatic evaluator). The original dimension holds the 57 revised original cases
+    and the variants.}
+  \label{tab:dexa-breakdown}
+  \begin{tabular}{llrrr}
+    \toprule
+    Group & & $n$ & MAS + Lean & ReAct \\
+    \midrule
+    Suite       & core                 & 104 & 0.279 & 0.587 \\
+                & robustness           & 23  & 0.348 & 0.348 \\
+    \midrule
+    Category    & simple               & 61  & 0.410 & 0.607 \\
+                & moderate             & 37  & 0.189 & 0.486 \\
+                & complex              & 29  & 0.172 & 0.483 \\
+    \midrule
+    Dimension   & original             & 64  & 0.250 & 0.578 \\
+                & dependency structure & 15  & 0.133 & 0.667 \\
+                & ambiguity            & 9   & 0.444 & 0.444 \\
+                & scale                & 8   & 0.375 & 0.625 \\
+                & concurrency          & 8   & 0.500 & 0.625 \\
+                & failure recovery     & 23  & 0.348 & 0.348 \\
+    \midrule
+    Behavior    & execute              & 101 & 0.327 & 0.634 \\
+                & clarify              & 26  & 0.154 & 0.192 \\
+    \midrule
+    Failure     & none (incl.\ controls) & 109 & 0.275 & 0.587 \\
+                & unavailable          & 11  & 0.273 & 0.364 \\
+                & transient            & 5   & 0.400 & 0.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Where the loss arises is visible from a classification probe (Table~\ref{tab:classification}).
+Asked directly which device types a request involves, Gemma~4 answers the 115 extended cases
+with device labels almost perfectly (macro-F1 0.957, recall 0.992). On the 60 original cases,
+where the end-to-end MAS can be scored the same way, the agents it actually assigned a task reach
+a macro-F1 of only 0.638 with recall 0.497: the devices it activates are almost always appropriate
+(precision 0.948), but it activates too few of them. The model understands the request; the task
+planner drops goals when there are many, and a dropped goal fails the case under the binary
+score. The ReAct agent, which never decomposes the request but works through it one tool call at
+a time, does not have this failure mode.
+
+% -----------------------------------------------------------------------------
+\subsection{Benchmark 1: Home Assistant dataset}
+\label{sec:eval-ha}
+% -----------------------------------------------------------------------------
+
+Both systems fulfil most of the 95 requests: the MAS 80 (0.842), the ReAct agent 82 (0.863), a
+difference of two cases. The MAS needs 107\,s per case against 17\,s, since every request passes
+through planning, validation and outcome checks. Table~\ref{tab:gemma4-homeassistant} breaks the
+MAS result down by device domain: covers, fans, to-do lists and valves succeed in every case,
+whereas lights, locks and vacuums, whose requests more often address several entities or areas at
+once, lie between 0.67 and 0.71.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{MAS + Lean on the Home Assistant Assist dataset by device domain.}
+  \label{tab:gemma4-homeassistant}
+  \begin{tabular}{lrr}
+    \toprule
+    Domain        & $n$ & Success rate \\
+    \midrule
+    Cover         & 11  & 1.00 \\
+    Fan           & 6   & 1.00 \\
+    Light         & 13  & 0.69 \\
+    Lock          & 9   & 0.67 \\
+    Media player  & 21  & 0.86 \\
+    To-do list    & 9   & 1.00 \\
+    Vacuum        & 17  & 0.71 \\
+    Valve         & 9   & 1.00 \\
+    \midrule
+    All           & 95  & 0.842 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% -----------------------------------------------------------------------------
+\subsection{Benchmark 2: SimuHome}
+\label{sec:eval-simuhome}
+% -----------------------------------------------------------------------------
+
+Table~\ref{tab:gemma4-simuhome} reports the MAS success rate by query type. State questions
+(QT1) are answered correctly in about four of five episodes, whether feasible or not. Workflow
+scheduling (QT4) is the weakest type, as the benchmark's authors also observe for other
+models~\cite{simuhome}: feasible workflows succeed in 0.26--0.44 of the episodes, and the system
+almost never recognizes an infeasible delayed or conditional workflow (QT4-2 and QT4-3 infeasible:
+one success each in 50 episodes), answering as if the request could be scheduled.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{MAS + Lean success rate on SimuHome by query type (50 episodes per cell). QT1 and all
+    infeasible episodes are judged by a three-vote LLM panel (Gemma~4 31B, 49,152-token context;
+    1,008 judge calls, no errors or truncated prompts).}
+  \label{tab:gemma4-simuhome}
+  \begin{tabular}{lrrr}
+    \toprule
+    Query type & Feasible & Infeasible & All   \\
+    \midrule
+    QT1        & 0.82     & 0.80       & 0.81  \\
+    QT2        & 0.42     & 0.34       & 0.38  \\
+    QT3        & 0.42     & 0.80       & 0.61  \\
+    QT4-1      & 0.26     & 0.26       & 0.26  \\
+    QT4-2      & 0.44     & 0.02       & 0.23  \\
+    QT4-3      & 0.40     & 0.02       & 0.21  \\
+    \midrule
+    All        & 0.460    & 0.373      & 0.417 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% -----------------------------------------------------------------------------
+\subsection{Benchmark 3: HomeBench}
+\label{sec:eval-homebench}
+% -----------------------------------------------------------------------------
+
+On the 1,000-case sample the MAS reaches an exact match of 0.649 and an operation-level F1 of
+0.703 (Table~\ref{tab:gemma4-homebench}). Single valid instructions and instructions for
+non-existent devices are handled well (exact match 0.848 and 0.905), instructions for unsupported
+attributes less so (0.696). Multi-step instructions are the weakest type: most of their individual
+operations are correct (F1 0.645), but only 0.098 of them are fully correct, since one wrong or
+omitted operation fails the whole instruction; of the 1,509 expected operations in these cases,
+32\% were missing and 39\% of the predicted ones were wrong or superfluous. The ReAct run on the
+same sample is in progress.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{MAS + Lean on HomeBench by instruction type (stratified sample of 1,000 test cases, seed 42).}
+  \label{tab:gemma4-homebench}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    Instruction type   & $n$   & Exact match & Precision & Recall & F1    \\
+    \midrule
+    Normal             & 356   & 0.848 & 0.791 & 0.916 & 0.849 \\
+    Missing device     & 242   & 0.905 & 0.818 & 0.909 & 0.861 \\
+    Missing attribute  & 148   & 0.696 & 0.656 & 0.696 & 0.675 \\
+    Multi-step         & 254   & 0.098 & 0.615 & 0.679 & 0.645 \\
+    \midrule
+    All                & 1,000 & 0.649 & 0.668 & 0.742 & 0.703 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% -----------------------------------------------------------------------------
+\subsection{Performance by intent complexity}
+\label{sec:eval-complexity}
+% -----------------------------------------------------------------------------
+
+Across benchmarks the same pattern recurs: both systems handle single, explicit requests well, and
+performance falls with the number of goals a request contains. On our benchmark the MAS drops from
+0.41 (simple) to 0.17 (complex) and the ReAct agent from 0.61 to 0.48; on HomeBench the MAS
+falls from 0.85 exact match on single instructions to 0.10 on multi-step ones while still getting
+two thirds of the individual operations right; on SimuHome, workflow scheduling is the weakest
+query type for both the MAS and the models reported by the benchmark's authors. The classification
+probe shows that this is not a limit of the model's understanding, which identifies the involved
+devices almost perfectly, but of turning that understanding into a complete plan. For the MAS the
+loss is concentrated in task decomposition, and it is larger than for the single agent because a
+goal the planner omits is never recovered, whereas the single agent revisits the request after
+every tool call. The one place where the MAS's additional structure pays off is failure recovery:
+under transient device failures its outcome checks and local repair recover the requested goals
+where the single agent does not.
+
+% -----------------------------------------------------------------------------
+\subsection{Limitations of the evaluation}
+% -----------------------------------------------------------------------------
+
+Several aspects of the setup qualify the results. (1) Each configuration was run once, with a
+quantized model and deterministic decoding; we report no variance across seeds. (2) The ReAct
+baseline runs without the allocation checker, so the comparison measures task success, not
+safety: the checker's guarantees (Section~\ref{sec:lean}) hold only for the MAS. On the extended
+benchmark the checker rejected no batch, so it did not affect the MAS score either. (3) SimuHome
+scores QT1 and all infeasible episodes with a three-vote LLM judge. We used Gemma~4 31B as the
+judge, so the model under test judges its own answers, which may favor it; the judge received
+complete prompts (49,152-token context, no truncation). The benchmark's default judge
+configuration (Gemma~2, 8,192 tokens) cannot read the judge prompts, which exceed 28,000 tokens,
+and scored every answer as a failure in a first run that we discarded. (4) The Home Assistant
+results are from a rerun after correcting a harness defect: the adapter's routing argument
+\texttt{service\_id}, which is not part of Home Assistant's own tool schema, was required but not
+defaulted, so 81 of 95 MAS cases failed before planning could complete. (5) HomeBench was
+evaluated on a 1,000-case sample, not the full test set of 17,366 instructions. (6) Our
+benchmark's free-text checks are lexical; an answer phrased outside the published term lists
+fails although it may be correct, and this affects both systems alike. (7) The checker's
+guarantees and the QED\_LEAF audit cover the Lean development; the translation of agent cards,
+tasks and observed state into the checker's input is unverified Python.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Classification probe: which device types does a request involve? Gemma~4 zero-shot
+    against a fine-tuned or zero-shot ModernBERT-large encoder on one task per benchmark
+    (macro-averaged; 95\% bootstrap CI of macro-F1). The ``end to end'' row scores the device
+    types of the agents the MAS actually assigned a task.}
+  \label{tab:classification}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llrrrrrc}
+    \toprule
+    Task & Model & $n$ & Acc. & Precision & Recall & F1 & 95\% CI (F1) \\
+    \midrule
+    T1 DEXA device types, extended edition & Gemma~4, zero-shot & 115 & 0.817 & 0.926 & 0.992 & \textbf{0.957} & [0.936, 0.975] \\
+    T1 DEXA device types, extended edition & ModernBERT, zero-shot & 115 & 0.330 & 0.852 & 0.720 & 0.759 & [0.719, 0.794] \\
+    T1 DEXA device types, original edition & Gemma~4, zero-shot & 60 & 0.550 & 0.940 & 0.834 & \textbf{0.872} & [0.825, 0.906] \\
+    T1 DEXA device types, original edition & Gemma~4 + MAS, end to end & 60 & 0.267 & 0.948 & 0.497 & 0.638 & [0.552, 0.706] \\
+    T1 DEXA device types, original edition & ModernBERT, zero-shot & 60 & 0.267 & 0.909 & 0.510 & 0.611 & [0.524, 0.681] \\
+    T2 HomeBench validity (3 classes) & Gemma~4, zero-shot & 1,500 & 0.873 & 0.890 & 0.873 & 0.872 & [0.856, 0.888] \\
+    T2 HomeBench validity (3 classes) & ModernBERT, fine-tuned & 1,500 & 0.972 & 0.974 & 0.972 & \textbf{0.972} & -- \\
+    T3 SimuHome feasibility (2 classes) & Gemma~4, zero-shot & 600 & 0.592 & 0.607 & 0.592 & 0.577 & [0.537, 0.616] \\
+    T3 SimuHome feasibility (2 classes) & ModernBERT, 5-fold CV & 600 & 0.788 & 0.794 & 0.788 & \textbf{0.787} & [0.755, 0.820] \\
+    T4 Home Assistant domain (8 classes) & Gemma~4, zero-shot & 95 & 1.000 & 1.000 & 1.000 & \textbf{1.000} & [1.000, 1.000] \\
+    T4 Home Assistant domain (8 classes) & ModernBERT, zero-shot & 95 & 0.937 & 0.972 & 0.956 & 0.958 & [0.922, 0.986] \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+% =============================================================================
+\section{Conclusion}
+% =============================================================================
+
+We extended an LLM-based multi-agent smart home system with device contracts, a dependency graph
+with parallel execution, validation with local repair, and an allocation checker whose soundness
+and completeness are proved in Lean~4 and whose proofs are audited by QED\_LEAF against a protected
+specification. We also extended the benchmark to 127 automatically scored scenarios with a
+robustness suite, and evaluated the system with an open 31B model on four benchmarks against a
+single ReAct agent with the same model. The verified checker works as intended: it admitted every
+valid batch, the audit caught a real axiom-policy violation that compilation had not, and the
+proofs now rely only on Lean's standard axioms. The effectiveness result is less favorable: on our
+benchmark the single agent passes 0.54 of the cases and the multi-agent system 0.29, and the gap
+grows with the number of goals in a request; on Home Assistant the two are within two cases. The
+multi-agent system is better only under device failures, where its outcome checks and local repair
+recover goals that the single agent loses. The cause is task decomposition, not model
+understanding: the model identifies the devices a request involves almost perfectly, and the
+planner drops goals when there are many. The architecture's safety argument therefore stands,
+while its effectiveness argument depends on fixing decomposition.
+
+% =============================================================================
+\section{Future work}
+% =============================================================================
+
+The most direct next step is a plan-completeness check: after planning, compare the goals the
+model itself extracts from the request with the tasks in the queue, and send the uncovered goals
+back to the planner before execution. We also plan to run the multi-agent system without the
+allocation checker on the extended benchmark to report the checker's runtime cost precisely, to
+repeat all runs over several seeds, to replace the self-judging SimuHome configuration with an
+independent judge model, and to complete the ReAct baseline on SimuHome and HomeBench. For the
+benchmark, no case yet has a Lean rejection as its correct outcome; a safety suite of conflicting,
+out-of-range and stale-evidence requests would evaluate the verified layer itself rather than the
+language model. Finally, the fine-tuned encoder's advantage on validity and feasibility
+classification (Table~\ref{tab:classification}) suggests a fast pre-check in front of the planner
+for requests that name a missing device or cannot be fulfilled, the cases where both systems are
+weakest.
+
+% =============================================================================
+% Bibliography (standalone only; the paper has its own)
+% =============================================================================
+\begin{thebibliography}{9}
+\bibitem{gemma4} Gemma Team, Google DeepMind: Gemma 4 technical report (2026),
+  \url{https://arxiv.org/abs/2607.02770}
+\bibitem{react} Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., Cao, Y.: ReAct:
+  Synergizing reasoning and acting in language models. In: The Eleventh International Conference
+  on Learning Representations (2023). \url{https://arxiv.org/abs/2210.03629}
+\bibitem{homebench} Li, S., Guo, Y., Yao, J., Liu, Z., Wang, H.: HomeBench: Evaluating LLMs in
+  smart homes with valid and invalid instructions across single and multiple devices. In:
+  Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics
+  (Volume 1: Long Papers), pp. 12230--12250 (2025). \url{https://aclanthology.org/2025.acl-long.597/}
+\bibitem{simuhome} Seo, G., Yang, J., Pyo, J., Kim, N., Lee, J., Jo, Y.: SimuHome: A temporal- and
+  environment-aware benchmark for smart home LLM agents. In: The Fourteenth International
+  Conference on Learning Representations (2026). \url{https://openreview.net/forum?id=LCS1WsGvha}
+\end{thebibliography}
+
+\end{document}

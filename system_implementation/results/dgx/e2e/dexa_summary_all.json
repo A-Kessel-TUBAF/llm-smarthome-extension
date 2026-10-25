@@ -1,0 +1,76 @@
+{
+  "overall": {
+    "cases": 100,
+    "errors": 23,
+    "runtime_errors": 0,
+    "planning_failures": 19,
+    "action_failures": 5,
+    "llm_calls": 180,
+    "llm_call_errors": 0,
+    "calls_with_usage": 180,
+    "input_tokens": 610437,
+    "output_tokens": 24371,
+    "model_call_latency_s": 4473.790663695894,
+    "mean_latency_s": 43.27358387542888,
+    "score": null,
+    "note": "DEXA logs only; no automatic task-success score. Injected faults may produce expected execution errors."
+  },
+  "by_category": {
+    "complex": {
+      "cases": 39,
+      "errors": 7,
+      "mean_latency_s": 39.92919431884702,
+      "injections_triggered": 0
+    },
+    "moderate": {
+      "cases": 32,
+      "errors": 10,
+      "mean_latency_s": 51.854252836841624,
+      "injections_triggered": 2
+    },
+    "simple": {
+      "cases": 29,
+      "errors": 6,
+      "mean_latency_s": 38.30288683892838,
+      "injections_triggered": 4
+    }
+  },
+  "by_dimension": {
+    "ambiguity": {
+      "cases": 8,
+      "errors": 0,
+      "mean_latency_s": 27.653723845956847,
+      "injections_triggered": 0
+    },
+    "concurrency": {
+      "cases": 8,
+      "errors": 2,
+      "mean_latency_s": 38.923990512732416,
+      "injections_triggered": 0
+    },
+    "dependency_structure": {
+      "cases": 8,
+      "errors": 4,
+      "mean_latency_s": 71.03946084249765,
+      "injections_triggered": 0
+    },
+    "failure_recovery": {
+      "cases": 8,
+      "errors": 7,
+      "mean_latency_s": 77.38632337132003,
+      "injections_triggered": 6
+    },
+    "original": {
+      "cases": 60,
+      "errors": 10,
+      "mean_latency_s": 39.08572274018079,
+      "injections_triggered": 0
+    },
+    "scale": {
+      "cases": 8,
+      "errors": 0,
+      "mean_latency_s": 32.773379318998195,
+      "injections_triggered": 0
+    }
+  }
+}

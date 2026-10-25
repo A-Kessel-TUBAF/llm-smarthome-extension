@@ -1,0 +1,574 @@
+{
+  "results": [
+    {
+      "task": "t1_dexa_device_types",
+      "tag": "gemma4-31b-mas",
+      "model": "gemma4:31b",
+      "mode": "MAS end to end (agents assigned a task)",
+      "n": 60,
+      "accuracy": 0.26666666666666666,
+      "precision_micro": 0.9375,
+      "recall_micro": 0.487012987012987,
+      "f1_micro": 0.6410256410256411,
+      "precision_macro": 0.9475446428571428,
+      "recall_macro": 0.4968824122874129,
+      "f1_macro": 0.6376104996662136,
+      "per_class": {
+        "search": {
+          "precision": 0.7857142857142857,
+          "recall": 0.4074074074074074,
+          "f1": 0.5365853658536585,
+          "support": 27
+        },
+        "fridge": {
+          "precision": 0.9375,
+          "recall": 0.8823529411764706,
+          "f1": 0.9090909090909091,
+          "support": 17
+        },
+        "display": {
+          "precision": 0.8571428571428571,
+          "recall": 0.46153846153846156,
+          "f1": 0.6,
+          "support": 13
+        },
+        "audio": {
+          "precision": 1.0,
+          "recall": 0.3157894736842105,
+          "f1": 0.4799999999999999,
+          "support": 19
+        },
+        "clock": {
+          "precision": 1.0,
+          "recall": 0.4666666666666667,
+          "f1": 0.6363636363636364,
+          "support": 15
+        },
+        "thermostat": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666,
+          "support": 20
+        },
+        "light": {
+          "precision": 1.0,
+          "recall": 0.391304347826087,
+          "f1": 0.5625,
+          "support": 23
+        },
+        "calendar": {
+          "precision": 1.0,
+          "recall": 0.55,
+          "f1": 0.7096774193548387,
+          "support": 20
+        }
+      },
+      "f1_macro_ci": [
+        0.5523364123808473,
+        0.7055624746054566
+      ],
+      "problems": 4,
+      "mean_latency_s": 39.08572274018079
+    },
+    {
+      "task": "t1_dexa_device_types",
+      "tag": "gemma4-31b",
+      "model": "gemma4:31b",
+      "mode": "zero-shot",
+      "n": 60,
+      "accuracy": 0.55,
+      "precision_micro": 0.9398496240601504,
+      "recall_micro": 0.8116883116883117,
+      "f1_micro": 0.8710801393728222,
+      "precision_macro": 0.9398637820512821,
+      "recall_macro": 0.8344865030934825,
+      "f1_macro": 0.8720512129994888,
+      "per_class": {
+        "search": {
+          "precision": 1.0,
+          "recall": 0.6296296296296297,
+          "f1": 0.7727272727272727,
+          "support": 27
+        },
+        "fridge": {
+          "precision": 0.85,
+          "recall": 1.0,
+          "f1": 0.9189189189189189,
+          "support": 17
+        },
+        "display": {
+          "precision": 0.8125,
+          "recall": 1.0,
+          "f1": 0.896551724137931,
+          "support": 13
+        },
+        "audio": {
+          "precision": 1.0,
+          "recall": 0.7368421052631579,
+          "f1": 0.8484848484848484,
+          "support": 19
+        },
+        "clock": {
+          "precision": 0.9333333333333333,
+          "recall": 0.9333333333333333,
+          "f1": 0.9333333333333333,
+          "support": 15
+        },
+        "thermostat": {
+          "precision": 0.9230769230769231,
+          "recall": 0.6,
+          "f1": 0.7272727272727274,
+          "support": 20
+        },
+        "light": {
+          "precision": 1.0,
+          "recall": 0.8260869565217391,
+          "f1": 0.9047619047619047,
+          "support": 23
+        },
+        "calendar": {
+          "precision": 1.0,
+          "recall": 0.95,
+          "f1": 0.9743589743589743,
+          "support": 20
+        }
+      },
+      "f1_macro_ci": [
+        0.8247287058527425,
+        0.9058847403600006
+      ],
+      "problems": 0,
+      "mean_latency_s": 1.7687779907913257
+    },
+    {
+      "task": "t1_dexa_device_types",
+      "tag": "modernbert-zero-shot",
+      "model": "MoritzLaurer/ModernBERT-large-zeroshot-v2.0",
+      "mode": "zero-shot",
+      "n": 60,
+      "accuracy": 0.26666666666666666,
+      "precision_micro": 0.891566265060241,
+      "recall_micro": 0.4805194805194805,
+      "f1_micro": 0.6244725738396624,
+      "precision_macro": 0.9091704863763688,
+      "recall_macro": 0.509907693592409,
+      "f1_macro": 0.6107575826029337,
+      "per_class": {
+        "search": {
+          "precision": 1.0,
+          "recall": 0.037037037037037035,
+          "f1": 0.07142857142857142,
+          "support": 27
+        },
+        "fridge": {
+          "precision": 0.7647058823529411,
+          "recall": 0.7647058823529411,
+          "f1": 0.7647058823529412,
+          "support": 17
+        },
+        "display": {
+          "precision": 0.8571428571428571,
+          "recall": 0.46153846153846156,
+          "f1": 0.6,
+          "support": 13
+        },
+        "audio": {
+          "precision": 1.0,
+          "recall": 0.42105263157894735,
+          "f1": 0.5925925925925926,
+          "support": 19
+        },
+        "clock": {
+          "precision": 0.8333333333333334,
+          "recall": 0.6666666666666666,
+          "f1": 0.7407407407407408,
+          "support": 15
+        },
+        "thermostat": {
+          "precision": 0.8181818181818182,
+          "recall": 0.45,
+          "f1": 0.5806451612903226,
+          "support": 20
+        },
+        "light": {
+          "precision": 1.0,
+          "recall": 0.4782608695652174,
+          "f1": 0.6470588235294118,
+          "support": 23
+        },
+        "calendar": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.888888888888889,
+          "support": 20
+        }
+      },
+      "f1_macro_ci": [
+        0.5235669124008616,
+        0.6811908344866033
+      ],
+      "problems": 0,
+      "mean_latency_s": 0.21093692877329887
+    },
+    {
+      "task": "t2_homebench_validity",
+      "tag": "gemma4-31b",
+      "model": "gemma4:31b",
+      "mode": "zero-shot",
+      "n": 1500,
+      "accuracy": 0.8726666666666667,
+      "precision_micro": 0.8726666666666667,
+      "recall_micro": 0.8726666666666667,
+      "f1_micro": 0.8726666666666667,
+      "precision_macro": 0.8902866653739254,
+      "recall_macro": 0.8726666666666666,
+      "f1_macro": 0.8715464449686224,
+      "per_class": {
+        "normal": {
+          "precision": 0.7546296296296297,
+          "recall": 0.978,
+          "f1": 0.8519163763066203,
+          "support": 500
+        },
+        "unexist_device": {
+          "precision": 1.0,
+          "recall": 0.94,
+          "f1": 0.9690721649484536,
+          "support": 500
+        },
+        "unexist_attribute": {
+          "precision": 0.9162303664921466,
+          "recall": 0.7,
+          "f1": 0.7936507936507936,
+          "support": 500
+        }
+      },
+      "f1_macro_ci": [
+        0.8556225956671696,
+        0.8878866996170462
+      ],
+      "problems": 0,
+      "mean_latency_s": 8.65692668991598
+    },
+    {
+      "task": "t2_homebench_validity",
+      "tag": "modernbert-finetune",
+      "model": "answerdotai/ModernBERT-large",
+      "mode": "finetune",
+      "n": 12952,
+      "accuracy": 0.9464175416924027,
+      "precision_micro": 0.9464175416924027,
+      "recall_micro": 0.9464175416924027,
+      "f1_micro": 0.9464175416924027,
+      "precision_macro": 0.929130565876335,
+      "recall_macro": 0.9612458262286571,
+      "f1_macro": 0.9403698645726641,
+      "per_class": {
+        "normal": {
+          "precision": 0.9967444384156267,
+          "recall": 0.8907386455471149,
+          "f1": 0.9407647661317855,
+          "support": 6187
+        },
+        "unexist_device": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 4194
+        },
+        "unexist_attribute": {
+          "precision": 0.7906472592133788,
+          "recall": 0.9929988331388565,
+          "f1": 0.8803448275862069,
+          "support": 2571
+        }
+      },
+      "f1_macro_ci": [
+        0.9359549620498475,
+        0.9444592830506167
+      ],
+      "problems": 0,
+      "mean_latency_s": 0.025614123528497092
+    },
+    {
+      "task": "t3_simuhome_feasibility",
+      "tag": "gemma4-31b",
+      "model": "gemma4:31b",
+      "mode": "zero-shot",
+      "n": 600,
+      "accuracy": 0.5916666666666667,
+      "precision_micro": 0.5916666666666667,
+      "recall_micro": 0.5916666666666667,
+      "f1_micro": 0.5916666666666667,
+      "precision_macro": 0.6068223899729384,
+      "recall_macro": 0.5916666666666667,
+      "f1_macro": 0.5766507022702467,
+      "per_class": {
+        "feasible": {
+          "precision": 0.5665859564164649,
+          "recall": 0.78,
+          "f1": 0.6563814866760169,
+          "support": 300
+        },
+        "infeasible": {
+          "precision": 0.6470588235294118,
+          "recall": 0.4033333333333333,
+          "f1": 0.4969199178644764,
+          "support": 300
+        }
+      },
+      "f1_macro_ci": [
+        0.5369400747666768,
+        0.6160034635170941
+      ],
+      "problems": 0,
+      "mean_latency_s": 4.26077634835771
+    },
+    {
+      "task": "t3_simuhome_feasibility",
+      "tag": "modernbert-cv",
+      "model": "answerdotai/ModernBERT-large",
+      "mode": "cv",
+      "n": 600,
+      "accuracy": 0.7883333333333333,
+      "precision_micro": 0.7883333333333333,
+      "recall_micro": 0.7883333333333333,
+      "f1_micro": 0.7883333333333333,
+      "precision_macro": 0.794381232203832,
+      "recall_macro": 0.7883333333333333,
+      "f1_macro": 0.787240577298402,
+      "per_class": {
+        "feasible": {
+          "precision": 0.7521865889212828,
+          "recall": 0.86,
+          "f1": 0.8024883359253498,
+          "support": 300
+        },
+        "infeasible": {
+          "precision": 0.8365758754863813,
+          "recall": 0.7166666666666667,
+          "f1": 0.7719928186714542,
+          "support": 300
+        }
+      },
+      "f1_macro_ci": [
+        0.7546963670496357,
+        0.8195521159632061
+      ],
+      "problems": 0,
+      "mean_latency_s": 0.00996390576629589
+    },
+    {
+      "task": "t4_homeassistant_domain",
+      "tag": "gemma4-31b",
+      "model": "gemma4:31b",
+      "mode": "zero-shot",
+      "n": 95,
+      "accuracy": 1.0,
+      "precision_micro": 1.0,
+      "recall_micro": 1.0,
+      "f1_micro": 1.0,
+      "precision_macro": 1.0,
+      "recall_macro": 1.0,
+      "f1_macro": 1.0,
+      "per_class": {
+        "cover": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 11
+        },
+        "fan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 6
+        },
+        "light": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 13
+        },
+        "lock": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        },
+        "media-player": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 21
+        },
+        "todo": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        },
+        "vacuum": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 17
+        },
+        "valve": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        }
+      },
+      "f1_macro_ci": [
+        1.0,
+        1.0
+      ],
+      "problems": 0,
+      "mean_latency_s": 1.39981961746357
+    },
+    {
+      "task": "t4_homeassistant_domain",
+      "tag": "modernbert-zero-shot",
+      "model": "MoritzLaurer/ModernBERT-large-zeroshot-v2.0",
+      "mode": "zero-shot",
+      "n": 95,
+      "accuracy": 0.9368421052631579,
+      "precision_micro": 0.9368421052631579,
+      "recall_micro": 0.9368421052631579,
+      "f1_micro": 0.9368421052631579,
+      "precision_macro": 0.9722222222222222,
+      "recall_macro": 0.9558823529411764,
+      "f1_macro": 0.9575892857142857,
+      "per_class": {
+        "cover": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 11
+        },
+        "fan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 6
+        },
+        "light": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 13
+        },
+        "lock": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        },
+        "media-player": {
+          "precision": 0.7777777777777778,
+          "recall": 1.0,
+          "f1": 0.8750000000000001,
+          "support": 21
+        },
+        "todo": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        },
+        "vacuum": {
+          "precision": 1.0,
+          "recall": 0.6470588235294118,
+          "f1": 0.7857142857142858,
+          "support": 17
+        },
+        "valve": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 9
+        }
+      },
+      "f1_macro_ci": [
+        0.9215371762740183,
+        0.9864908854166667
+      ],
+      "problems": 0,
+      "mean_latency_s": 0.15342190229382954
+    }
+  ],
+  "comparisons": [
+    {
+      "task": "t1_dexa_device_types",
+      "modernbert": "modernbert-zero-shot",
+      "other": "gemma4-31b-mas",
+      "n": 60,
+      "f1_macro_modernbert": 0.6107575826029337,
+      "f1_macro_other": 0.6376104996662136,
+      "delta_f1_macro": -0.02685291706327997,
+      "delta_ci": [
+        -0.11172771234112377,
+        0.05387549517308191
+      ],
+      "verdict": "no significant difference"
+    },
+    {
+      "task": "t1_dexa_device_types",
+      "modernbert": "modernbert-zero-shot",
+      "other": "gemma4-31b",
+      "n": 60,
+      "f1_macro_modernbert": 0.6107575826029337,
+      "f1_macro_other": 0.8720512129994888,
+      "delta_f1_macro": -0.2612936303965552,
+      "delta_ci": [
+        -0.34514183044814484,
+        -0.1962738987072674
+      ],
+      "verdict": "gemma4-31b better"
+    },
+    {
+      "task": "t2_homebench_validity",
+      "modernbert": "modernbert-finetune",
+      "other": "gemma4-31b",
+      "n": 1500,
+      "f1_macro_modernbert": 0.9719551282051282,
+      "f1_macro_other": 0.8715464449686224,
+      "delta_f1_macro": 0.10040868323650576,
+      "delta_ci": [
+        0.0822426567419341,
+        0.11901265127471387
+      ],
+      "verdict": "ModernBERT better"
+    },
+    {
+      "task": "t3_simuhome_feasibility",
+      "modernbert": "modernbert-cv",
+      "other": "gemma4-31b",
+      "n": 600,
+      "f1_macro_modernbert": 0.787240577298402,
+      "f1_macro_other": 0.5766507022702467,
+      "delta_f1_macro": 0.2105898750281553,
+      "delta_ci": [
+        0.15435465248044591,
+        0.2677234512526052
+      ],
+      "verdict": "ModernBERT better"
+    },
+    {
+      "task": "t4_homeassistant_domain",
+      "modernbert": "modernbert-zero-shot",
+      "other": "gemma4-31b",
+      "n": 95,
+      "f1_macro_modernbert": 0.9575892857142857,
+      "f1_macro_other": 1.0,
+      "delta_f1_macro": -0.0424107142857143,
+      "delta_ci": [
+        -0.07846282372598162,
+        -0.01350911458333331
+      ],
+      "verdict": "gemma4-31b better"
+    }
+  ]
+}

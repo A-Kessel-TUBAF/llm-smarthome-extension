@@ -1,2 +1,20 @@
 __pycache__/
 *.pyc
+
+system_implementation/.env
+system_implementation/.env.example
+
+system_implementation/logs/
+logs/
+
+.venv/
+venv/
+
+.ipynb_checkpoints/
+
+# External benchmark checkouts and their environments
+external/
+
+# Benchmark and evaluation environments; large rebuilt task file
+.venv-*/
+system_implementation/results/dgx/tasks/t2_homebench_validity.jsonl

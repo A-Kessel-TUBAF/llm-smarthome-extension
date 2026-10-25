@@ -1,0 +1,9 @@
+{
+  "model": "gemma4:31b",
+  "mode": "zero-shot",
+  "think": false,
+  "base_url": "http://127.0.0.1:11500",
+  "n": 1500,
+  "split": "test",
+  "ids_file": "results/dgx/t2_sample_ids.txt"
+}

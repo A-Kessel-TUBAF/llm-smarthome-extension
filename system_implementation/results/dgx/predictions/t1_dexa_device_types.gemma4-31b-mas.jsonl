@@ -1,0 +1,100 @@
+{"id": "complex_01", "pred": ["search"], "problem": null, "latency_s": 69.59000085480511}
+{"id": "complex_02", "pred": ["calendar"], "problem": null, "latency_s": 27.393317786976695}
+{"id": "complex_03", "pred": ["audio"], "problem": null, "latency_s": 24.23370179068297}
+{"id": "complex_04", "pred": ["light"], "problem": null, "latency_s": 24.098301851190627}
+{"id": "complex_05", "pred": ["clock", "display", "fridge", "search"], "problem": null, "latency_s": 98.05339661147445}
+{"id": "complex_06", "pred": ["thermostat"], "problem": null, "latency_s": 41.8869068659842}
+{"id": "complex_07", "pred": ["calendar", "clock"], "problem": null, "latency_s": 92.33120091073215}
+{"id": "complex_08", "pred": ["display", "fridge", "search", "thermostat"], "problem": null, "latency_s": 28.37825215421617}
+{"id": "complex_09", "pred": ["light"], "problem": null, "latency_s": 49.36175776273012}
+{"id": "complex_10", "pred": ["fridge"], "problem": null, "latency_s": 30.452490650117397}
+{"id": "complex_11", "pred": ["thermostat"], "problem": null, "latency_s": 24.28300647623837}
+{"id": "complex_12", "pred": ["light"], "problem": null, "latency_s": 24.20820499304682}
+{"id": "complex_13", "pred": ["fridge"], "problem": null, "latency_s": 23.289156068116426}
+{"id": "complex_14", "pred": ["calendar"], "problem": null, "latency_s": 24.44260596577078}
+{"id": "complex_15", "pred": ["fridge"], "problem": null, "latency_s": 27.134431465528905}
+{"id": "complex_16", "pred": ["fridge"], "problem": null, "latency_s": 26.89198980294168}
+{"id": "complex_17", "pred": ["calendar", "display", "thermostat"], "problem": null, "latency_s": 37.11093948688358}
+{"id": "complex_18", "pred": ["clock"], "problem": null, "latency_s": 70.48694596160203}
+{"id": "complex_19", "pred": ["search", "thermostat"], "problem": null, "latency_s": 65.67896070331335}
+{"id": "complex_20", "pred": ["light"], "problem": null, "latency_s": 26.462249415926635}
+{"id": "ext_amb_01", "pred": ["light"], "problem": null, "latency_s": 42.18216298799962}
+{"id": "ext_amb_02", "pred": [], "problem": "no tasks", "latency_s": 21.369865706190467}
+{"id": "ext_amb_03", "pred": [], "problem": "no tasks", "latency_s": 22.485765593126416}
+{"id": "ext_amb_04", "pred": ["search"], "problem": null, "latency_s": 44.17941799201071}
+{"id": "ext_amb_05", "pred": ["audio"], "problem": null, "latency_s": 22.803860625252128}
+{"id": "ext_amb_06", "pred": [], "problem": "no tasks", "latency_s": 22.416674087755382}
+{"id": "ext_amb_07", "pred": [], "problem": "no tasks", "latency_s": 20.68117846455425}
+{"id": "ext_amb_08", "pred": ["light"], "problem": null, "latency_s": 25.110865310765803}
+{"id": "ext_conc_01", "pred": ["light"], "problem": null, "latency_s": 23.775371895171702}
+{"id": "ext_conc_02", "pred": [], "problem": "no tasks", "latency_s": 22.136938572861254}
+{"id": "ext_conc_03", "pred": ["display"], "problem": null, "latency_s": 57.44706279039383}
+{"id": "ext_conc_04", "pred": ["light"], "problem": null, "latency_s": 25.976459147408605}
+{"id": "ext_conc_05", "pred": ["audio"], "problem": null, "latency_s": 24.18314838130027}
+{"id": "ext_conc_06", "pred": ["clock"], "problem": null, "latency_s": 23.487458609975874}
+{"id": "ext_conc_07", "pred": ["calendar", "display", "fridge", "search"], "problem": null, "latency_s": 105.0742299510166}
+{"id": "ext_conc_08", "pred": ["light"], "problem": null, "latency_s": 29.31125475373119}
+{"id": "ext_dep_01", "pred": ["fridge"], "problem": null, "latency_s": 26.10707895923406}
+{"id": "ext_dep_02", "pred": ["calendar", "clock"], "problem": null, "latency_s": 80.79942776914686}
+{"id": "ext_dep_03", "pred": ["light", "search"], "problem": null, "latency_s": 76.13909461162984}
+{"id": "ext_dep_04", "pred": ["calendar", "search", "thermostat"], "problem": null, "latency_s": 170.87487408332527}
+{"id": "ext_dep_05", "pred": ["fridge"], "problem": null, "latency_s": 24.72078876942396}
+{"id": "ext_dep_06", "pred": ["calendar"], "problem": null, "latency_s": 25.738542357459664}
+{"id": "ext_dep_07", "pred": ["audio", "clock", "display", "light", "search"], "problem": null, "latency_s": 139.797255798243}
+{"id": "ext_dep_08", "pred": ["fridge"], "problem": null, "latency_s": 24.138624391518533}
+{"id": "ext_fail_01", "pred": ["light"], "problem": null, "latency_s": 23.80620152875781}
+{"id": "ext_fail_02", "pred": ["clock", "display", "search"], "problem": null, "latency_s": 87.11855259723961}
+{"id": "ext_fail_03", "pred": ["fridge"], "problem": null, "latency_s": 61.079471551813185}
+{"id": "ext_fail_04", "pred": ["calendar"], "problem": null, "latency_s": 76.0676489956677}
+{"id": "ext_fail_05", "pred": ["audio", "light"], "problem": null, "latency_s": 97.59841272234917}
+{"id": "ext_fail_06", "pred": ["display", "light", "thermostat"], "problem": null, "latency_s": 126.37132213637233}
+{"id": "ext_fail_07", "pred": ["search"], "problem": null, "latency_s": 60.02294408623129}
+{"id": "ext_fail_08", "pred": ["calendar", "clock"], "problem": null, "latency_s": 87.02603335212916}
+{"id": "ext_scale_01", "pred": ["light", "thermostat"], "problem": null, "latency_s": 43.54225930944085}
+{"id": "ext_scale_02", "pred": ["light"], "problem": null, "latency_s": 28.10013411473483}
+{"id": "ext_scale_03", "pred": ["light"], "problem": null, "latency_s": 42.2413049954921}
+{"id": "ext_scale_04", "pred": ["light"], "problem": null, "latency_s": 28.499285969883204}
+{"id": "ext_scale_05", "pred": ["fridge"], "problem": null, "latency_s": 26.066114557906985}
+{"id": "ext_scale_06", "pred": ["light"], "problem": null, "latency_s": 24.774162515066564}
+{"id": "ext_scale_07", "pred": ["light"], "problem": null, "latency_s": 42.88815352041274}
+{"id": "ext_scale_08", "pred": ["light"], "problem": null, "latency_s": 26.075619569048285}
+{"id": "moderate_01", "pred": ["calendar"], "problem": null, "latency_s": 26.545380547642708}
+{"id": "moderate_02", "pred": ["clock"], "problem": null, "latency_s": 43.35440805088729}
+{"id": "moderate_03", "pred": ["fridge"], "problem": null, "latency_s": 23.679247139021754}
+{"id": "moderate_04", "pred": ["fridge", "search"], "problem": null, "latency_s": 105.38056701608002}
+{"id": "moderate_05", "pred": ["search"], "problem": null, "latency_s": 24.995861577801406}
+{"id": "moderate_06", "pred": ["fridge"], "problem": null, "latency_s": 25.309327858500183}
+{"id": "moderate_07", "pred": ["calendar", "clock"], "problem": null, "latency_s": 82.84630227927119}
+{"id": "moderate_08", "pred": ["light", "thermostat"], "problem": null, "latency_s": 26.461276683025062}
+{"id": "moderate_09", "pred": ["audio", "thermostat"], "problem": null, "latency_s": 80.3873160937801}
+{"id": "moderate_10", "pred": ["display"], "problem": null, "latency_s": 23.612131292000413}
+{"id": "moderate_11", "pred": [], "problem": "no tasks", "latency_s": 21.461962092667818}
+{"id": "moderate_12", "pred": ["fridge"], "problem": null, "latency_s": 22.813808229751885}
+{"id": "moderate_13", "pred": ["clock", "display", "light", "search"], "problem": null, "latency_s": 82.02363974228501}
+{"id": "moderate_14", "pred": ["calendar"], "problem": null, "latency_s": 25.784695849753916}
+{"id": "moderate_15", "pred": ["audio"], "problem": null, "latency_s": 24.94886482413858}
+{"id": "moderate_16", "pred": ["calendar"], "problem": null, "latency_s": 26.405133306980133}
+{"id": "moderate_17", "pred": ["fridge"], "problem": null, "latency_s": 26.06233737617731}
+{"id": "moderate_18", "pred": ["fridge", "search"], "problem": null, "latency_s": 52.005021774210036}
+{"id": "moderate_19", "pred": ["display", "search"], "problem": null, "latency_s": 118.33281002007425}
+{"id": "moderate_20", "pred": ["light"], "problem": null, "latency_s": 24.027263712137938}
+{"id": "simple_01", "pred": ["search"], "problem": null, "latency_s": 34.16277804132551}
+{"id": "simple_02", "pred": ["fridge"], "problem": null, "latency_s": 21.668731532990932}
+{"id": "simple_03", "pred": ["fridge", "search"], "problem": null, "latency_s": 39.179448190145195}
+{"id": "simple_04", "pred": ["fridge", "search"], "problem": null, "latency_s": 46.16695884056389}
+{"id": "simple_05", "pred": [], "problem": "no tasks", "latency_s": 23.806477850303054}
+{"id": "simple_06", "pred": ["audio"], "problem": null, "latency_s": 24.99788978137076}
+{"id": "simple_07", "pred": ["clock"], "problem": null, "latency_s": 22.92641087528318}
+{"id": "simple_08", "pred": ["search"], "problem": null, "latency_s": 23.09707964863628}
+{"id": "simple_09", "pred": ["thermostat"], "problem": null, "latency_s": 26.50672715343535}
+{"id": "simple_10", "pred": ["calendar"], "problem": null, "latency_s": 44.760704319924116}
+{"id": "simple_11", "pred": ["search"], "problem": null, "latency_s": 23.051489295437932}
+{"id": "simple_12", "pred": ["audio"], "problem": null, "latency_s": 24.383982457220554}
+{"id": "simple_13", "pred": [], "problem": "no tasks", "latency_s": 23.345024643465877}
+{"id": "simple_14", "pred": ["calendar"], "problem": null, "latency_s": 24.87738332618028}
+{"id": "simple_15", "pred": ["thermostat"], "problem": null, "latency_s": 40.30929697025567}
+{"id": "simple_16", "pred": ["light"], "problem": null, "latency_s": 24.367450702004135}
+{"id": "simple_17", "pred": ["calendar", "display"], "problem": null, "latency_s": 76.65730084571987}
+{"id": "simple_18", "pred": ["fridge"], "problem": null, "latency_s": 23.18881302140653}
+{"id": "simple_19", "pred": [], "problem": "no tasks", "latency_s": 22.256403679959476}
+{"id": "simple_20", "pred": ["audio", "light", "thermostat"], "problem": null, "latency_s": 33.22784019075334}
