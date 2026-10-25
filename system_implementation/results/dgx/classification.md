@@ -2,9 +2,9 @@
 
 | Task | Model | Mode | n | Acc. | P micro | R micro | F1 micro | P macro | R macro | F1 macro | F1 macro 95% CI | Problems | Latency/item (s) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| t1_dexa_device_types | gemma4:31b | MAS end to end (agents assigned a task) | 100 | 0.250 | 0.955 | 0.443 | 0.605 | 0.956 | 0.452 | 0.598 | 0.526–0.660 | 9 | 43.274 |
-| t1_dexa_device_types | gemma4:31b | zero-shot | 100 | 0.640 | 0.965 | 0.857 | 0.908 | 0.962 | 0.870 | 0.909 | 0.879–0.935 | 0 | 1.792 |
-| t1_dexa_device_types | MoritzLaurer/ModernBERT-large-zeroshot-v2.0 | zero-shot | 100 | 0.300 | 0.935 | 0.547 | 0.690 | 0.884 | 0.574 | 0.670 | 0.616–0.718 | 0 | 0.192 |
+| t1_dexa_device_types | gemma4:31b | MAS end to end (agents assigned a task) | 60 | 0.267 | 0.938 | 0.487 | 0.641 | 0.948 | 0.497 | 0.638 | 0.552–0.706 | 4 | 39.086 |
+| t1_dexa_device_types | gemma4:31b | zero-shot | 60 | 0.550 | 0.940 | 0.812 | 0.871 | 0.940 | 0.834 | 0.872 | 0.825–0.906 | 0 | 1.769 |
+| t1_dexa_device_types | MoritzLaurer/ModernBERT-large-zeroshot-v2.0 | zero-shot | 60 | 0.267 | 0.892 | 0.481 | 0.624 | 0.909 | 0.510 | 0.611 | 0.524–0.681 | 0 | 0.211 |
 | t2_homebench_validity | gemma4:31b | zero-shot | 1500 | 0.873 | 0.873 | 0.873 | 0.873 | 0.890 | 0.873 | 0.872 | 0.856–0.888 | 0 | 8.657 |
 | t2_homebench_validity | answerdotai/ModernBERT-large | finetune | 12952 | 0.946 | 0.946 | 0.946 | 0.946 | 0.929 | 0.961 | 0.940 | 0.936–0.944 | 0 | 0.026 |
 | t3_simuhome_feasibility | gemma4:31b | zero-shot | 600 | 0.592 | 0.592 | 0.592 | 0.592 | 0.607 | 0.592 | 0.577 | 0.537–0.616 | 0 | 4.261 |
@@ -16,8 +16,8 @@
 
 | Task | ModernBERT | Other | n | F1 macro ModernBERT | F1 macro other | ΔF1 | 95% CI | Verdict |
 |---|---|---|---|---|---|---|---|---|
-| t1_dexa_device_types | modernbert-zero-shot | gemma4-31b-mas | 100 | 0.670 | 0.598 | 0.072 | 0.005–0.143 | ModernBERT better |
-| t1_dexa_device_types | modernbert-zero-shot | gemma4-31b | 100 | 0.670 | 0.909 | -0.239 | -0.283–-0.200 | gemma4-31b better |
+| t1_dexa_device_types | modernbert-zero-shot | gemma4-31b-mas | 60 | 0.611 | 0.638 | -0.027 | -0.112–0.054 | no significant difference |
+| t1_dexa_device_types | modernbert-zero-shot | gemma4-31b | 60 | 0.611 | 0.872 | -0.261 | -0.345–-0.196 | gemma4-31b better |
 | t2_homebench_validity | modernbert-finetune | gemma4-31b | 1500 | 0.972 | 0.872 | 0.100 | 0.082–0.119 | ModernBERT better |
 | t3_simuhome_feasibility | modernbert-cv | gemma4-31b | 600 | 0.787 | 0.577 | 0.211 | 0.154–0.268 | ModernBERT better |
 | t4_homeassistant_domain | modernbert-zero-shot | gemma4-31b | 95 | 0.958 | 1.000 | -0.042 | -0.078–-0.014 | gemma4-31b better |
@@ -26,40 +26,40 @@
 
 | Label | Precision | Recall | F1 | Support |
 |---|---|---|---|---|
-| search | 0.857 | 0.391 | 0.537 | 46 |
-| fridge | 0.955 | 0.840 | 0.894 | 25 |
-| display | 0.917 | 0.367 | 0.524 | 30 |
-| audio | 1.000 | 0.286 | 0.444 | 35 |
-| clock | 0.917 | 0.367 | 0.524 | 30 |
-| thermostat | 1.000 | 0.342 | 0.510 | 38 |
-| light | 1.000 | 0.591 | 0.743 | 44 |
-| calendar | 1.000 | 0.436 | 0.607 | 39 |
+| search | 0.786 | 0.407 | 0.537 | 27 |
+| fridge | 0.938 | 0.882 | 0.909 | 17 |
+| display | 0.857 | 0.462 | 0.600 | 13 |
+| audio | 1.000 | 0.316 | 0.480 | 19 |
+| clock | 1.000 | 0.467 | 0.636 | 15 |
+| thermostat | 1.000 | 0.500 | 0.667 | 20 |
+| light | 1.000 | 0.391 | 0.562 | 23 |
+| calendar | 1.000 | 0.550 | 0.710 | 20 |
 
 ### t1_dexa_device_types – gemma4:31b (zero-shot)
 
 | Label | Precision | Recall | F1 | Support |
 |---|---|---|---|---|
-| search | 1.000 | 0.696 | 0.821 | 46 |
-| fridge | 0.893 | 1.000 | 0.943 | 25 |
-| display | 0.903 | 0.933 | 0.918 | 30 |
-| audio | 0.967 | 0.829 | 0.892 | 35 |
-| clock | 0.966 | 0.933 | 0.949 | 30 |
-| thermostat | 0.966 | 0.737 | 0.836 | 38 |
-| light | 1.000 | 0.886 | 0.940 | 44 |
-| calendar | 1.000 | 0.949 | 0.974 | 39 |
+| search | 1.000 | 0.630 | 0.773 | 27 |
+| fridge | 0.850 | 1.000 | 0.919 | 17 |
+| display | 0.812 | 1.000 | 0.897 | 13 |
+| audio | 1.000 | 0.737 | 0.848 | 19 |
+| clock | 0.933 | 0.933 | 0.933 | 15 |
+| thermostat | 0.923 | 0.600 | 0.727 | 20 |
+| light | 1.000 | 0.826 | 0.905 | 23 |
+| calendar | 1.000 | 0.950 | 0.974 | 20 |
 
 ### t1_dexa_device_types – MoritzLaurer/ModernBERT-large-zeroshot-v2.0 (zero-shot)
 
 | Label | Precision | Recall | F1 | Support |
 |---|---|---|---|---|
-| search | 0.500 | 0.022 | 0.042 | 46 |
-| fridge | 0.833 | 0.800 | 0.816 | 25 |
-| display | 0.947 | 0.600 | 0.735 | 30 |
-| audio | 1.000 | 0.429 | 0.600 | 35 |
-| clock | 0.875 | 0.700 | 0.778 | 30 |
-| thermostat | 0.920 | 0.605 | 0.730 | 38 |
-| light | 1.000 | 0.614 | 0.761 | 44 |
-| calendar | 1.000 | 0.821 | 0.901 | 39 |
+| search | 1.000 | 0.037 | 0.071 | 27 |
+| fridge | 0.765 | 0.765 | 0.765 | 17 |
+| display | 0.857 | 0.462 | 0.600 | 13 |
+| audio | 1.000 | 0.421 | 0.593 | 19 |
+| clock | 0.833 | 0.667 | 0.741 | 15 |
+| thermostat | 0.818 | 0.450 | 0.581 | 20 |
+| light | 1.000 | 0.478 | 0.647 | 23 |
+| calendar | 1.000 | 0.800 | 0.889 | 20 |
 
 ### t2_homebench_validity – gemma4:31b (zero-shot)
 

@@ -56,17 +56,29 @@ def item(id_, text, labels, split="test", context="", group=""):
     return {"id": id_, "text": text, "context": context, "labels": sorted(labels), "split": split, "group": group}
 
 
-def t1_dexa_device_types():
+DEXA_EDITIONS = {"original": ("benchmark_data.json",), "extended": ("extension_tasks.json",)}
+
+
+def t1_dexa_device_types(dataset=None):
     """DEXA: device types of all required and acceptable intents (maximal interpretation).
 
-    An intent annotated with alternatives ("clock or calendar") contributes every alternative.
+    The benchmark has two editions: the unchanged 60-case original (`benchmark_data.json`) and the
+    extended edition (`extension_tasks.json`, 127 cases including revised copies of 57 originals),
+    so exactly one is read. An intent annotated with alternatives ("clock or calendar") contributes
+    every alternative. Intents whose device type is "unresolved" (the extended edition's clarify
+    cases, where the correct answer is a question) are not device labels and are left out; a case
+    with no device label at all is skipped.
     """
+    dataset = dataset or os.getenv("DEXA_DATASET") or "original"
+    labels_known = set(TASKS["t1_dexa_device_types"]["labels"])
     items = []
-    for name in ("benchmark_data.json", "extension_tasks.json"):
+    for name in DEXA_EDITIONS[dataset]:
         for case in json.loads((REPO / "benchmark" / name).read_text(encoding="utf-8"))["test_cases"]:
             intents = case.get("required_intents", []) + case.get("acceptable_intents", [])
-            labels = {t.strip() for i in intents for t in i["device_type"].split(" or ")}
-            items.append(item(case["id"], case["user_input"], labels, group=case.get("dimension") or case["category"]))
+            labels = {t.strip() for i in intents for t in i["device_type"].split(" or ")} & labels_known
+            if labels:
+                items.append(item(case["id"], case["user_input"], labels,
+                                  group=case.get("dimension") or case.get("suite") or case["category"]))
     return items
 
 
@@ -140,10 +152,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tasks", nargs="+", choices=BUILDERS, default=["t1", "t2", "t3"])
     parser.add_argument("--out", type=Path, default=ROOT / "results" / "dgx" / "tasks")
+    parser.add_argument("--dexa-dataset", choices=sorted(DEXA_EDITIONS), default=None,
+                        help="DEXA edition for T1 (default: $DEXA_DATASET or original)")
     args = parser.parse_args(argv)
     for key in args.tasks:
         name, build = BUILDERS[key]
-        items = build()
+        items = build(args.dexa_dataset) if key == "t1" else build()
         write_jsonl(args.out / f"{name}.jsonl", items)
         splits = defaultdict(int)
         for i in items:

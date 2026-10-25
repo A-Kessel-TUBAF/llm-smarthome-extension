@@ -14,7 +14,7 @@ from pathlib import Path
 from .metrics import AGENT_DEVICE, scores
 from .tasks import ROOT, TASKS, t1_dexa_device_types
 
-TOTAL = {"dexa": 100, "homebench": 1000, "simuhome": 600, "homeassistant": 95}
+TOTAL = {"dexa": None, "homebench": 1000, "simuhome": 600, "homeassistant": 95}  # DEXA: size of the edition
 META = {"config", "summary", "qed_leaf", "run", "dataset", "command", "runs", "failure", "comparison"}
 
 
@@ -47,7 +47,8 @@ def main(argv=None):
         rows = case_rows(base, benchmark)
         found = next((base / benchmark).rglob("qed_leaf.json"), None)
         leaf = json.loads(found.read_text())["summary"]["status"] if found else "-"
-        done = f"{len(rows)}/{TOTAL[benchmark]}"
+        total = len(t1_dexa_device_types()) if benchmark == "dexa" else TOTAL[benchmark]
+        done = f"{len(rows)}/{total}"
         if not rows:
             print(f"| {benchmark} | {done} | - | - | - | {leaf} |")
             continue

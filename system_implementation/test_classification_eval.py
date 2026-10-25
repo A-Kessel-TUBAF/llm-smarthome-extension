@@ -95,10 +95,14 @@ class GemmaTests(unittest.TestCase):
 class TaskTests(unittest.TestCase):
 
     def test_dexa_items(self):
-        items = tasks.t1_dexa_device_types()
-        self.assertEqual(len(items), 100)
         allowed = set(tasks.TASKS["t1_dexa_device_types"]["labels"])
-        self.assertTrue(all(i["labels"] and set(i["labels"]) <= allowed for i in items))
+        original = tasks.t1_dexa_device_types("original")
+        self.assertEqual(len(original), 60)
+        extended = tasks.t1_dexa_device_types("extended")
+        self.assertGreater(len(extended), 100)  # 127 cases minus those with only "unresolved" intents
+        for items in (original, extended):
+            self.assertTrue(all(i["labels"] and set(i["labels"]) <= allowed for i in items))
+        self.assertNotIn("unresolved", {l for i in extended for l in i["labels"]})
 
     def test_cross_validation_folds_partition_and_stratify(self):
         items = [tasks.item(f"e{n}", "q", {"feasible" if n % 2 else "infeasible"}, group=f"qt{n % 3}") for n in range(60)]

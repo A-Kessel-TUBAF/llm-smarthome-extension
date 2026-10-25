@@ -114,7 +114,7 @@ We evaluate on the 95 cases of the Home Assistant Assist dataset
 (Section~\ref{sec:eval-ha}), the 600 episodes of SimuHome
 (Section~\ref{sec:eval-simuhome}), a stratified sample of 1,000 HomeBench test
 instructions drawn proportionally to instruction type with seed 42
-(Section~\ref{sec:eval-homebench}), and the 100 cases of our own benchmark
+(Section~\ref{sec:eval-homebench}), and the 60 cases of the original edition of our own benchmark
 (Section~\ref{sec:eval-own}). Each benchmark is scored by its native evaluator.
 Table~\ref{tab:gemma4-e2e} summarizes the end-to-end results.
 
@@ -133,7 +133,7 @@ Table~\ref{tab:gemma4-e2e} summarizes the end-to-end results.
     \toprule
     Benchmark & Cases & Precision & Recall & F1 & Exact match & Success rate & Errors & LLM calls & Latency (s) \\
     \midrule
-    DEXA (device types) & 100   & 0.955 & 0.443 & 0.605 & 0.250 & --    & 23  & 180   & 43.3  \\
+    DEXA (device types) & 60    & 0.938 & 0.487 & 0.641 & 0.267 & --    & 10  & 99    & 39.1  \\
     HomeBench           & 1,000 & 0.668 & 0.742 & 0.703 & 0.649 & --    & 49  & 1,262 & 37.3  \\
     SimuHome            & 600   & --    & --    & --    & --    & 0.417 & 227 & 3,167 & 332.2 \\
     Home Assistant      & 95    & --    & --    & --    & --    & 0.842 & 9   & 311   & 107.3 \\
@@ -247,12 +247,12 @@ since one wrong or omitted operation fails the whole instruction.
 
 Our benchmark has no automatic task score, so we measure which device types the system
 involves. Against the device types of all required and acceptable intents, the agents that
-were assigned a task reach a precision of 0.955 but a recall of 0.443
+were assigned a task reach a precision of 0.938 but a recall of 0.487
 (Table~\ref{tab:gemma4-e2e}): the devices the system activates are almost always appropriate,
-but it activates too few of them. Restricted to the required intents, recall is 0.502.
+but it activates too few of them. Restricted to the required intents, recall is 0.549.
 Table~\ref{tab:gemma4-classification} separates the model from the system: asked directly
-which device types a request involves, Gemma~4 reaches a macro-F1 of 0.909 and covers the
-required intents with recall 0.952, whereas the end-to-end system reaches 0.598. The loss
+which device types a request involves, Gemma~4 reaches a macro-F1 of 0.872 and covers the
+required intents with recall 0.918, whereas the end-to-end system reaches 0.638. The loss
 therefore occurs in task decomposition, not in the model's understanding of the request,
 which matches the incomplete-decomposition failure pattern of the original system.
 
@@ -269,8 +269,8 @@ which matches the incomplete-decomposition failure pattern of the original syste
     \toprule
     Task & Setting & $n$ & Accuracy & Precision & Recall & F1 & 95\% CI (F1) & s/item \\
     \midrule
-    T1 DEXA device types (8, multi-label)   & zero-shot  & 100   & 0.640 & 0.962 & 0.870 & 0.909 & [0.879, 0.935] & 1.79  \\
-    T1 DEXA device types (8, multi-label)   & end to end & 100   & 0.250 & 0.956 & 0.452 & 0.598 & [0.526, 0.660] & 43.27 \\
+    T1 DEXA device types (8, multi-label)   & zero-shot  & 60    & 0.550 & 0.940 & 0.834 & 0.872 & [0.825, 0.906] & 1.79  \\
+    T1 DEXA device types (8, multi-label)   & end to end & 60    & 0.267 & 0.948 & 0.497 & 0.638 & [0.552, 0.706] & 39.10 \\
     T2 HomeBench validity (3 classes)       & zero-shot  & 1,500 & 0.873 & 0.890 & 0.873 & 0.872 & [0.856, 0.888] & 8.66  \\
     T3 SimuHome feasibility (2 classes)     & zero-shot  & 600   & 0.592 & 0.607 & 0.592 & 0.577 & [0.537, 0.616] & 4.26  \\
     T4 Home Assistant domain (8 classes)    & zero-shot  & 95    & 1.000 & 1.000 & 1.000 & 1.000 & [1.000, 1.000] & 1.40  \\
