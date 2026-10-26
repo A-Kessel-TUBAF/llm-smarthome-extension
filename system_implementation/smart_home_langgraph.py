@@ -18,8 +18,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
-from llm_config import configure_models, get_llm, model_for_role, summarize_calls
-from model_client import BackendUnavailable, retry_model_call
+from llm_config import configure_models, get_llm, model_for_role
+from model_client import BackendUnavailable, retry_model_call, summarize_calls
 from configuration import config_path as configured_path, system_settings
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
@@ -49,8 +49,14 @@ def resolve_settings(overrides=None, *, config_path=None):
         settings["max_repairs"] = 0
     if not settings["planner_replan"]:
         settings["max_replans"] = 0
-    if settings.get("lean_executable"):
-        settings["lean_executable"] = configured_path(settings["lean_executable"])
+    if settings["checker"] == "lean":
+        name = "allocation_checker.exe" if os.name == "nt" else "allocation_checker"
+        path = configured_path(settings.get("lean_executable") or "lean/.lake/build/bin/" + name)
+        if not Path(path).is_file() or not os.access(path, os.X_OK):
+            raise FileNotFoundError("Build the Lean checker first: cd lean && lake build")
+        if not settings["dependency_graph"] or not settings["validate_contracts"] or not settings["check_outcomes"]:
+            raise ValueError("Lean admission requires the graph, contract validation and observed outcome checks.")
+        settings["lean_executable"] = path
     return settings
 
 
@@ -199,8 +205,6 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
     settings = resolve_settings(overrides, config_path=config_path)
     validate_contracts = settings["validate_contracts"]
     dependency_graph = settings["dependency_graph"]
-    check_outcomes = settings["check_outcomes"]
-    checker = settings["checker"]
     search_mode = settings["search_mode"]
     scheduler_mode = settings["scheduler_mode"]
     lean_executable = settings.get("lean_executable")
@@ -211,13 +215,6 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
     simulation_data = deepcopy(simulation_data or {})
     simulation_data.setdefault("search_results", deepcopy(SEARCH_FIXTURES) if search_mode == "fixtures" else {})
     simulation_data["search_mode"] = search_mode
-    if checker == "lean":
-        executable_name = "allocation_checker.exe" if os.name == "nt" else "allocation_checker"
-        lean_executable = str(Path(lean_executable or Path(__file__).parent / "lean/.lake/build/bin" / executable_name).resolve())
-        if not Path(lean_executable).is_file():
-            raise FileNotFoundError("Build the Lean checker first: cd lean && lake build")
-        if not dependency_graph or not validate_contracts or not check_outcomes:
-            raise ValueError("Lean admission requires the graph, contract validation and observed outcome checks.")
     setup = deepcopy(HOME_DEFAULTS if home_config is None else home_config)
     config, home = {}, {}
     stamp = observed_at or (simulation_data or {}).get("now") or datetime.now(timezone.utc).isoformat()

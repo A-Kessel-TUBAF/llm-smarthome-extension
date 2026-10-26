@@ -68,7 +68,7 @@ def prepare_output(path, metadata, resume=False):
             raise FileExistsError(f"Results already exist in {output}; use --resume or a new --output-dir.")
         if json.loads(config.read_text(encoding="utf-8")) != metadata:
             raise ValueError("Resume refused: system, settings, selected cases, data or source code changed.")
-    elif resume and any(output.glob("*.json")):
+    elif resume and any(p.name not in {"command.json", "failure.json"} for p in output.glob("*.json")):
         raise ValueError("Cannot resume results without config.json.")
     else:
         write_json(config, metadata)

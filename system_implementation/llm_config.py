@@ -5,7 +5,6 @@ from langchain.chat_models import init_chat_model
 from agent_registry import AGENT_REGISTRY
 
 from configuration import CONFIG_PATH, load_config
-from model_client import summarize_calls
 
 load_dotenv(Path(__file__).with_name(".env"))
 _models = {}

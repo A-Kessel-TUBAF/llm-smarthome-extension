@@ -1,7 +1,6 @@
 """Extended DEXA: neutral episodes, fresh environments and automatic evaluation.
 The untouched 60-case reference can still be run with --dataset original.
 """
-from collections import Counter
 from copy import deepcopy
 import hashlib
 import importlib.util

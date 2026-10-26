@@ -20,6 +20,34 @@ ROOT = Path(__file__).resolve().parent
 BENCHMARKS = ("dexa", "simuhome", "homeassistant", "homebench")
 
 
+def benchmark_options(names, paths=None, pythons=None, *, original=False):
+    """Resolve data/interpreters once for the matrix and the deadline preflight."""
+    configured = load_config()["benchmarks"]
+    resolved_paths, resolved_pythons = {}, {}
+    for name in names:
+        variable = "HOMEASSISTANT_DATASET_PATH" if name == "homeassistant" else name.upper() + "_PATH"
+        default = "../benchmark/benchmark_data.json" if name == "dexa" and original else configured[name]["path"]
+        resolved_paths[name] = configured_path((paths or {}).get(name) or os.getenv(variable) or default)
+        if not Path(resolved_paths[name]).exists():
+            raise FileNotFoundError(f"{name} data not found: {resolved_paths[name]}")
+        value = (pythons or {}).get(name) or os.getenv(name.upper() + "_PYTHON") or configured[name].get("python")
+        executable = configured_path(str(value), executable=True) if value else sys.executable
+        found = shutil.which(executable)
+        if not found:
+            raise FileNotFoundError(f"{name} Python not found: {executable}; set --{name}-python.")
+        # Resolving a venv symlink would silently select the base interpreter.
+        resolved_pythons[name] = str(Path(found).absolute())
+    return resolved_paths, resolved_pythons
+
+
+def write_comparison(output, rows):
+    write_json(output / "comparison.json", rows)
+    with (output / "comparison.csv").open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=list(dict.fromkeys(k for row in rows for k in row)))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def run_experiment(system_path, *, benchmark="homebench", benchmark_path=None, category="all",
                    limit=0, case_ids=(), output_dir=None, config_path=None, settings=None, resume=False,
                    dataset=None, dimension=None, suite="all", failure_mode=None):
@@ -89,26 +117,15 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
     if benchmark == "all" and (benchmark_path or category != "all" or case_ids):
         raise ValueError("For --benchmark all use --dexa-path/--homebench-path/--simuhome-path/--homeassistant-path; "
                          "--category and --case-id are only supported for a single benchmark.")
+    benchmarks = BENCHMARKS if benchmark == "all" else (benchmark,)
+    paths = dict(benchmark_paths or {})
+    if benchmark_path:
+        paths[benchmark] = benchmark_path
+    paths, pythons = benchmark_options(benchmarks, paths, benchmark_pythons, original=dataset == "original")
     output = Path(output_dir or configured_path(defaults["output_dir"])).resolve()
     if timestamped:
         output /= datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     output.mkdir(parents=True, exist_ok=resume)
-    benchmarks = BENCHMARKS if benchmark == "all" else (benchmark,)
-    configured = load_config()["benchmarks"]
-    paths = {b: os.getenv({"dexa": "DEXA_PATH", "homebench": "HOMEBENCH_PATH", "simuhome": "SIMUHOME_PATH", "homeassistant": "HOMEASSISTANT_DATASET_PATH"}[b])
-             or configured_path("../benchmark/benchmark_data.json" if b == "dexa" and dataset == "original"
-                                else configured[b]["path"]) for b in BENCHMARKS}
-    paths.update(benchmark_paths or {})
-    if benchmark_path:
-        paths[benchmark] = benchmark_path
-    selected_pythons = {b: os.getenv(b.upper() + "_PYTHON") or configured_path(configured[b].get("python"), executable=True)
-                        for b in BENCHMARKS if os.getenv(b.upper() + "_PYTHON") or configured[b].get("python")}
-    selected_pythons.update(benchmark_pythons or {})
-    pythons = {}
-    for name, executable in selected_pythons.items():
-        found = shutil.which(os.path.expanduser(str(executable)))
-        # Preserve venv symlinks; resolving them selects the base interpreter.
-        pythons[name] = str(Path(found).absolute()) if found else str(executable)
     manifest = {"runs": runs, "repetitions": repetitions, "benchmark": benchmark, "benchmarks": list(benchmarks),
                 "category": category, "limit": limit, "case_ids": list(case_ids),
                 "benchmark_paths": {b: str(Path(paths.get(b) or benchmark_path).resolve())
@@ -185,11 +202,7 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
                         row["status"] = "completed_with_errors"
                 rows.append(row)
                 # Persist after every system, including failures. JSON is authoritative.
-                (output / "comparison.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
-                with (output / "comparison.csv").open("w", newline="", encoding="utf-8") as file:
-                    writer = csv.DictWriter(file, fieldnames=list(dict.fromkeys(k for r in rows for k in r)))
-                    writer.writeheader()
-                    writer.writerows(rows)
+                write_comparison(output, rows)
                 print(f"  {row['status']}; details: {destination}", flush=True)
     print(f"Comparison: {output / 'comparison.csv'}")
     return rows
@@ -258,12 +271,7 @@ def run_deadline_plan(*, config_path=None, output_dir=None, resume=False, dry_ru
     if {"minimal_sequential", "extended"} & set(plan["simuhome_runs"]):
         raise ValueError("The deadline plan must skip completed SimuHome variants minimal_sequential and extended.")
 
-    bench_cfg = config["benchmarks"]
-    paths = {name: (benchmark_paths or {}).get(name) or os.getenv({
-        "homeassistant": "HOMEASSISTANT_DATASET_PATH", "homebench": "HOMEBENCH_PATH",
-        "simuhome": "SIMUHOME_PATH"}[name]) or configured_path(bench_cfg[name]["path"])
-        for name in DEADLINE_BENCHMARKS}
-    pythons = benchmark_pythons or {}
+    paths, pythons = benchmark_options(DEADLINE_BENCHMARKS, benchmark_paths, benchmark_pythons)
     sample = homebench_sample(paths["homebench"], plan.get("homebench_cases", 200), plan.get("homebench_seed", 42))
     # Validate judge-free selection now, before launching any expensive benchmark.
     from external_benchmarks.adapters.simuhome import load as load_simuhome, needs_judge
@@ -290,6 +298,8 @@ def run_deadline_plan(*, config_path=None, output_dir=None, resume=False, dry_ru
         print("Deadline plan (no experiments started):")
         for name in DEADLINE_BENCHMARKS:
             print(f"  {name}: " + ", ".join(run["name"] for run in stage_runs[name]))
+            print(f"    Python: {pythons[name]}")
+            print(f"    Data: {paths[name]}")
             if name == "homebench":
                 print(f"    {sample['size']} fixed cases: {sample['strata']} (seed={sample['seed']})")
             if name == "simuhome":
@@ -311,11 +321,7 @@ def run_deadline_plan(*, config_path=None, output_dir=None, resume=False, dry_ru
             output_dir=root / name, timestamped=False, resume=resume,
             config_path=config_path, benchmark_paths=paths, benchmark_pythons=pythons)
         rows += stage
-        write_json(root / "comparison.json", rows)
-        with (root / "comparison.csv").open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(key for r in rows for key in r)))
-            writer.writeheader()
-            writer.writerows(rows)
+        write_comparison(root, rows)
     print(f"Plan comparison: {root / 'comparison.csv'}", flush=True)
     return rows
 
@@ -378,11 +384,13 @@ if __name__ == "__main__":
         if not isinstance(settings, dict):
             raise ValueError("--settings-json must be a JSON object.")
         paths = {b: getattr(args, b + "_path") for b in BENCHMARKS if getattr(args, b + "_path")}
-        pythons = {b: getattr(args, b + "_python") or configured_path(load_config()["benchmarks"][b].get("python"), executable=True)
-                   for b in BENCHMARKS if getattr(args, b + "_python") or load_config()["benchmarks"][b].get("python")}
+        if args.benchmark_path and args.benchmark != "all":
+            paths.setdefault(args.benchmark, args.benchmark_path)
+        pythons = {b: getattr(args, b + "_python") for b in BENCHMARKS if getattr(args, b + "_python")}
+        paths, pythons = benchmark_options(BENCHMARKS if args.benchmark == "all" else (args.benchmark,),
+            paths, pythons, original=args.dataset == "original")
         options["benchmark_path"] = paths.get(args.benchmark) or args.benchmark_path
         executable = pythons.get(args.benchmark)
-        executable = shutil.which(executable) or executable if executable else None
         current_python = not executable or Path(executable).absolute() == Path(sys.executable).absolute()
         if args.system and args.benchmark != "all" and current_python and args.repetitions == 1:
             summary = run_experiment(args.system, output_dir=args.output_dir, settings=settings, resume=args.resume, **options)

@@ -47,10 +47,6 @@ search_mode = "fixtures"
 domain_agents_enabled = true
 lean_executable = ""
 
-[assurance]
-# off: skip; record: log the audit; require: refuse Lean runs unless it passed.
-qed_leaf = "record"
-
 [react]
 max_steps = 20
 json_mode = true

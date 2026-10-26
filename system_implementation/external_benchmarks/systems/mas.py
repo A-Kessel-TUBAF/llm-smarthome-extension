@@ -84,6 +84,7 @@ class MAS:
                               user_location=episode.context.get("user_location"),
                               reference_time=episode.context.get("reference_time"))
         report, effective = {}, self.settings
+        backend_unavailable = False
         try:
             for event in self.module.run_request(episode.request, home_config=home, agent_registry=registry,
                     tool_bindings=bindings, simulation_data=simulation, config_path=self.config_path,
@@ -93,6 +94,7 @@ class MAS:
                 if "experiment_config" in event:
                     effective = event["experiment_config"]["settings"]
         except Exception as exc:
+            backend_unavailable = isinstance(exc, BackendUnavailable)
             from langgraph.errors import GraphRecursionError
             model_failure = isinstance(exc, GraphRecursionError) or any(
                 call.get("error") and "raw_response" in call for call in report.get("llm_calls", []))
@@ -102,9 +104,7 @@ class MAS:
             call.get("technical_error") for call in report.get("llm_calls", []))
         report["status"] = "error" if report.get("error") else "finished"
         report["settings"] = effective
-        report["backend_unavailable"] = isinstance(
-            exc, BackendUnavailable
-        )
+        report["backend_unavailable"] = backend_unavailable
         if episode.benchmark == "homebench":
             try:
                 report["prediction"] = homebench_prediction(report, home)

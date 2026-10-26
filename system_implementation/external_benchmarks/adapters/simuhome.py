@@ -139,9 +139,9 @@ class Session:
 
 
 def load(path, category="all", case_ids=(), limit=0):
-    if category != "all" and category not in SUPPORTED_CATEGORIES:
+    if category not in {"all", "auto"} and category not in SUPPORTED_CATEGORIES:
         raise ValueError("Unknown SimuHome category: " + category)
-    path = Path(path).resolve()
+    path = Path(path).expanduser().resolve()
     root = next((p for p in (path, *path.parents) if (p / "src/clients/smarthome_client.py").is_file()), None)
     if root is None:
         raise FileNotFoundError("--benchmark-path must point inside a SimuHome checkout (repository or data/benchmark).")
@@ -151,8 +151,13 @@ def load(path, category="all", case_ids=(), limit=0):
     for file in files:
         episode = json.loads(file.read_text(encoding="utf-8"))
         case_category = episode["meta"]["query_type"] + "/" + episode["meta"]["case"]
-        if (category == "all" or category == case_category) and (not case_ids or file.stem in case_ids):
+        if (category == "all" or category == case_category or category == "auto" and not needs_judge(episode)):
             cases.append((file, episode))
+    unknown = set(case_ids) - {file.stem for file, _ in cases}
+    if unknown:
+        raise ValueError("Unknown/filtered SimuHome case IDs: " + ", ".join(sorted(unknown)))
+    if case_ids:
+        cases = [(file, episode) for file, episode in cases if file.stem in case_ids]
     if not cases:
         raise ValueError("No supported SimuHome episodes match the selected category/IDs/path.")
     return root, cases[:limit] if limit else cases

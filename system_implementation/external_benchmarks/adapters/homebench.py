@@ -10,7 +10,7 @@ from external_benchmarks.common import (Episode, cached_case, case_file, create_
 
 
 def load(path=None):
-    root = Path(path or os.getenv("HOMEBENCH_PATH") or configured_path(load_config()["benchmarks"]["homebench"]["path"]))
+    root = Path(path or os.getenv("HOMEBENCH_PATH") or configured_path(load_config()["benchmarks"]["homebench"]["path"])).expanduser()
     if root.is_dir() and (root / "dataset").is_dir():
         root = root / "dataset"
     tasks_path = root if root.is_file() else root / "test_data.jsonl"
@@ -144,8 +144,13 @@ def run(path=None, *, category="all", limit=0, case_ids=(), output_dir=None, set
     system = create_system(system, settings, config_path)
 
     cases, homes, paths = load(path)
-    cases = [case for case in cases if (category == "all" or case["type"] == category)
-             and (not case_ids or case["id"] in case_ids)]
+    cases = [case for case in cases if category == "all" or case["type"] == category]
+    if case_ids:
+        selected = {case["id"]: case for case in cases}
+        unknown = set(case_ids) - selected.keys()
+        if unknown or len(case_ids) != len(set(case_ids)):
+            raise ValueError("Unknown/filtered or duplicate HomeBench case IDs: " + ", ".join(sorted(unknown)))
+        cases = [selected[case_id] for case_id in case_ids]
     if limit:
         cases = cases[:limit]
     if not cases:

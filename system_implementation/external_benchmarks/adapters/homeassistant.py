@@ -39,7 +39,7 @@ def allow_network(socket_enabled):
 
 def load(path=None, category="all", case_ids=(), limit=0):
     root = Path(path or os.getenv("HOMEASSISTANT_DATASET_PATH") or
-                configured_path(load_config()["benchmarks"]["homeassistant"]["path"])).resolve()
+                configured_path(load_config()["benchmarks"]["homeassistant"]["path"])).expanduser().resolve()
     dataset = root if (root / "dataset_card.yaml").exists() else root / "datasets/assist"
     root = dataset.parents[1]
     sys.path.insert(0, str(root))
