@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import hashlib
 from pathlib import Path
+from model_client import BackendUnavailable
 
 
 def add_settings_arguments(parser):
@@ -101,6 +102,9 @@ class MAS:
             call.get("technical_error") for call in report.get("llm_calls", []))
         report["status"] = "error" if report.get("error") else "finished"
         report["settings"] = effective
+        report["backend_unavailable"] = isinstance(
+            exc, BackendUnavailable
+        )
         if episode.benchmark == "homebench":
             try:
                 report["prediction"] = homebench_prediction(report, home)

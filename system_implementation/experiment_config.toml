@@ -99,6 +99,19 @@ temperature = 1.0
 seeds = [42, 43, 44]
 request_timeout = 120.0
 
+# Reproducible, priority-ordered external experiments (use --plan deadline).
+# DEXA is intentionally excluded: it was evaluated separately.
+[deadline]
+homebench_cases = 200
+homebench_seed = 42
+# All eight MAS configurations and all three external baselines, in the same
+# order as [[runs]] below.  Each benchmark gets every ablation once.
+homeassistant_runs = ["minimal_sequential", "extended", "planner_only", "sequential", "llm_scheduler", "without_preparation_repair", "intent_analyser", "lean", "react", "sage", "dsia"]
+homebench_runs = ["minimal_sequential", "extended", "planner_only", "sequential", "llm_scheduler", "without_preparation_repair", "intent_analyser", "lean", "react", "sage", "dsia"]
+# These two SimuHome runs were already performed separately on the 600-case
+# experiment. Do not run them again here. The rest use 250 auto-scored cases.
+simuhome_runs = ["planner_only", "sequential", "llm_scheduler", "without_preparation_repair", "intent_analyser", "lean", "react", "sage", "dsia"]
+
 [[runs]]
 name = "minimal_sequential"
 system = "mas"

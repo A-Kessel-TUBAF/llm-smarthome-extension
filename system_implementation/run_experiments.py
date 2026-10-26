@@ -1,9 +1,11 @@
 """Run one system or the configured matrix on selected benchmarks."""
 import argparse
 import csv
+import hashlib
 import importlib.util
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -193,6 +195,131 @@ def run_experiments(*, benchmark="all", benchmark_path=None, category="all", lim
     return rows
 
 
+# The deadline plan is deliberately separate from --benchmark all: each stage has
+# different participants and case selection, and DEXA has already been evaluated.
+DEADLINE_BENCHMARKS = ("homeassistant", "homebench", "simuhome")
+HOMEBENCH_STRATA = ("normal", "unexist_device", "unexist_attribute", "multi")
+HOMEBENCH_WEIGHTS = (0.35, 0.25, 0.15, 0.25)
+
+
+def homebench_sample(path, size=200, seed=42):
+    """Stable, stratified case-ID sample; never assume the first N are balanced."""
+    from external_benchmarks.adapters.homebench import load
+    if not isinstance(size, int) or size < 1:
+        raise ValueError("HomeBench sample size must be a positive integer.")
+    cases, _, paths = load(path)
+    groups = {name: [] for name in HOMEBENCH_STRATA}
+    for case in cases:
+        name = str(case["type"])
+        stratum = "multi" if name.startswith("multi") else name
+        if stratum in groups:
+            groups[stratum].append(case["id"])
+    if len({x for values in groups.values() for x in values}) != sum(map(len, groups.values())):
+        raise ValueError("HomeBench contains duplicate case IDs.")
+    counts = [int(size * weight) for weight in HOMEBENCH_WEIGHTS]
+    # Assign fractional leftovers deterministically by remainder, then category order.
+    for i in sorted(range(len(counts)), key=lambda i: (-(size * HOMEBENCH_WEIGHTS[i] - counts[i]), i))[:size - sum(counts)]:
+        counts[i] += 1
+    sample = []
+    for index, name in enumerate(HOMEBENCH_STRATA):
+        ids = sorted(groups[name])
+        if len(ids) < counts[index]:
+            raise ValueError(f"HomeBench has only {len(ids)} {name} cases, need {counts[index]}.")
+        random.Random(seed + 1009 * index).shuffle(ids)
+        sample.extend(ids[:counts[index]])
+    # Keep a consistent, balanced order independent of the original dataset order.
+    random.Random(seed).shuffle(sample)
+    breakdown = dict(zip(HOMEBENCH_STRATA, counts))
+    source_hash = {str(p.resolve()): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+    return {"case_ids": sample, "strata": breakdown, "seed": seed, "size": size, "source_sha256": source_hash}
+
+
+def run_deadline_plan(*, config_path=None, output_dir=None, resume=False, dry_run=False,
+                      benchmark_paths=None, benchmark_pythons=None):
+    """Run Home Assistant -> fixed HomeBench sample -> judge-free SimuHome.
+
+    Runs are independent per benchmark. An interruption can be resumed with the
+    same output directory; saved case IDs and run order are immutable.
+    """
+    activate_config(config_path)
+    config = load_config()
+    plan = config.get("deadline", {})
+    runs_by_name = {item["name"]: item for item in config["runs"]}
+    expected = set(runs_by_name)
+    stage_runs = {}
+    for benchmark in DEADLINE_BENCHMARKS:
+        chosen = plan.get(benchmark + "_runs")
+        if not isinstance(chosen, list) or not chosen or len(chosen) != len(set(chosen)):
+            raise ValueError(f"[deadline].{benchmark}_runs must list unique system names.")
+        missing = set(chosen) - expected
+        if missing:
+            raise ValueError(f"Unknown systems in [deadline].{benchmark}_runs: {sorted(missing)}")
+        stage_runs[benchmark] = [runs_by_name[name] for name in chosen]
+    if {"minimal_sequential", "extended"} & set(plan["simuhome_runs"]):
+        raise ValueError("The deadline plan must skip completed SimuHome variants minimal_sequential and extended.")
+
+    bench_cfg = config["benchmarks"]
+    paths = {name: (benchmark_paths or {}).get(name) or os.getenv({
+        "homeassistant": "HOMEASSISTANT_DATASET_PATH", "homebench": "HOMEBENCH_PATH",
+        "simuhome": "SIMUHOME_PATH"}[name]) or configured_path(bench_cfg[name]["path"])
+        for name in DEADLINE_BENCHMARKS}
+    pythons = benchmark_pythons or {}
+    sample = homebench_sample(paths["homebench"], plan.get("homebench_cases", 200), plan.get("homebench_seed", 42))
+    # Validate judge-free selection now, before launching any expensive benchmark.
+    from external_benchmarks.adapters.simuhome import load as load_simuhome, needs_judge
+    _, auto_cases = load_simuhome(paths["simuhome"], category="auto")
+    if any(needs_judge(episode) for _, episode in auto_cases):
+        raise ValueError("SimuHome auto selector unexpectedly contains judge-required cases.")
+    if len(auto_cases) != 250:
+        raise ValueError(f"Expected 250 automatically scored SimuHome episodes, found {len(auto_cases)}.")
+
+    # Timestamp only the plan root, never individual stages. Resume requires --output-dir.
+    root = Path(output_dir or configured_path(config["experiments"]["output_dir"])).resolve()
+    if not resume and not output_dir and not dry_run:
+        root /= "deadline-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    if resume and not output_dir:
+        raise ValueError("--resume requires the original --output-dir for the deadline plan.")
+    plan_manifest = {"plan": "deadline", "benchmarks": list(DEADLINE_BENCHMARKS),
+        "runs": {name: stage_runs[name] for name in DEADLINE_BENCHMARKS},
+        "paths": {name: str(Path(path).expanduser().resolve()) for name, path in paths.items()},
+        "pythons": pythons, "homebench": sample,
+        "simuhome": {"category": "auto", "cases": len(auto_cases),
+                     "case_ids": [file.stem for file, _ in auto_cases]}}
+    plan_manifest = json.loads(json.dumps(plan_manifest, default=str))
+    if dry_run:
+        print("Deadline plan (no experiments started):")
+        for name in DEADLINE_BENCHMARKS:
+            print(f"  {name}: " + ", ".join(run["name"] for run in stage_runs[name]))
+            if name == "homebench":
+                print(f"    {sample['size']} fixed cases: {sample['strata']} (seed={sample['seed']})")
+            if name == "simuhome":
+                print(f"    {len(auto_cases)} native-scored episodes; no LLM judge; skip first two variants")
+        print(f"  Output root: {root}")
+        return []
+    root.mkdir(parents=True, exist_ok=resume)
+    manifest_file = root / "deadline_plan.json"
+    if resume:
+        if not manifest_file.exists() or json.loads(manifest_file.read_text(encoding="utf-8")) != plan_manifest:
+            raise ValueError("Resume refused: deadline plan (systems, paths, sample or settings) changed.")
+    else:
+        write_json(manifest_file, plan_manifest)
+    rows = []
+    for name in DEADLINE_BENCHMARKS:
+        print(f"\n=== {name.upper()} ===", flush=True)
+        stage = run_experiments(benchmark=name, runs=stage_runs[name], category="auto" if name == "simuhome" else "all",
+            limit=0, case_ids=sample["case_ids"] if name == "homebench" else (),
+            output_dir=root / name, timestamped=False, resume=resume,
+            config_path=config_path, benchmark_paths=paths, benchmark_pythons=pythons)
+        rows += stage
+        write_json(root / "comparison.json", rows)
+        with (root / "comparison.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(key for r in rows for key in r)))
+            writer.writeheader()
+            writer.writerows(rows)
+    print(f"Plan comparison: {root / 'comparison.csv'}", flush=True)
+    return rows
+
+
 if __name__ == "__main__":
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", type=Path)
@@ -201,6 +328,8 @@ if __name__ == "__main__":
     defaults = load_config()["experiments"]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmark", choices=(*BENCHMARKS, "all"), default=defaults["benchmark"])
+    parser.add_argument("--plan", choices=("deadline",), help="Run the configured priority order with benchmark-specific cases/systems")
+    parser.add_argument("--dry-run", action="store_true", help="Print the deadline plan without running experiments")
     parser.add_argument("--benchmark-path")
     for name in BENCHMARKS:
         parser.add_argument(f"--{name}-path", help="Data/checkout path for " + name)
@@ -229,6 +358,20 @@ if __name__ == "__main__":
                    category=args.category, limit=args.limit, case_ids=args.case_ids,
                    config_path=args.config, dataset=args.dataset, dimension=args.dimension, suite=args.suite, failure_mode=args.failure_mode)
     try:
+        if args.dry_run and not args.plan:
+            raise ValueError("--dry-run requires --plan deadline.")
+        if args.plan:
+            if args.system or args.case_ids or args.category != defaults["category"] or args.limit != defaults["limit"] or args.repetitions != 1:
+                raise ValueError("--plan uses its own ordered participants/cases; do not set --system, --case-id, --category, --limit or --repetitions.")
+            paths = {b: getattr(args, b + "_path") for b in BENCHMARKS if getattr(args, b + "_path")}
+            pythons = {b: getattr(args, b + "_python") for b in BENCHMARKS if getattr(args, b + "_python")}
+            rows = run_deadline_plan(config_path=args.config, output_dir=args.output_dir,
+                benchmark_paths=paths, benchmark_pythons=pythons, resume=args.resume, dry_run=args.dry_run)
+            if any(r["status"] in {"failed", "unsupported"} for r in rows):
+                parser.exit(2, "Some deadline runs failed; see comparison.json and console.log.\n")
+            if any(r["status"] == "incomplete" for r in rows):
+                parser.exit(3, "Some deadline runs are incomplete; see comparison.json.\n")
+            parser.exit(0)
         if args.resume and not args.output_dir:
             raise ValueError("--resume requires the original --output-dir.")
         settings = json.loads(args.settings_json)
