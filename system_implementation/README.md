@@ -69,6 +69,19 @@ The default matrix includes this as `planner_only`. For a single benchmark, the
 standalone CLI also accepts `--no-domain-agents`. `mas.domain_agents_enabled`
 controls the same switch in TOML; leave its default enabled for matrix comparisons.
 
+Extended and Lean enable `optional_domain_agents` in the run matrix. The
+planner can supply a complete, single-device action for an independent goal.
+Other goals and local repair still use the responsible domain agent. Both paths
+use the same graph, scheduler and execution checks. Lean checks either path's
+selected batch. Set `optional_domain_agents = false` in the run's settings to
+use the original domain-planning path.
+
+Graph tasks can guard a branch with an equality, numeric comparison or list
+membership check on public state or a confirmed read. The controller skips a
+false branch and its dependants. Scheduled actions use the episode's fixed
+reference time and must also be in the future at dispatch. Local repair keeps
+the locked scope and confirmed effects.
+
 For the complete extended DEXA benchmark (automatic evaluation, no judge):
 
 ```bash

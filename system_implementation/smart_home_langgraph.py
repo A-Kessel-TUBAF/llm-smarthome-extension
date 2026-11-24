@@ -22,7 +22,6 @@ from llm_config import configure_models, get_llm, model_for_role
 from model_client import BackendUnavailable, retry_model_call, summarize_calls
 from configuration import config_path as configured_path, system_settings
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command, Send, interrupt
@@ -40,6 +39,8 @@ def load_settings(path=None):
 def resolve_settings(overrides=None, *, config_path=None):
     settings = load_settings(config_path)
     settings.update(overrides or {})
+    if not settings["domain_agents_enabled"] or not settings["dependency_graph"]:
+        settings["optional_domain_agents"] = False
     if not settings["domain_agents_enabled"]:
         settings["local_repair"] = False
     if not settings["repair_enabled"]:
@@ -137,7 +138,7 @@ class Task(TypedDict):
     task_id: str
     agent_id: str
     action: str
-    status: Literal["pending", "planning", "waiting", "planned", "success", "failed", "blocked", "rejected"]
+    status: Literal["pending", "planning", "waiting", "planned", "success", "failed", "blocked", "rejected", "skipped"]
     depends_on: list[str]
     scope: list[str]
     constraints: list[str]
@@ -235,7 +236,7 @@ def create_initial_state(observations=None, *, home_config=None, use_defaults=Tr
     request_id = uuid4().hex
     simulator = Simulator(home, environment, simulation_data.get("now"), simulation_data.get("user_location"))
     home = simulator.snapshot()
-    simulator.reference_time = simulation_data.get("reference_time", simulator.now())
+    simulator.reference_time = simulation_data.get("reference_time") or simulator.now()
     simulator.tools = {**TOOLS, **(tool_bindings or {})}
     SIMULATORS[request_id] = simulator
     return dict(original_user_input="", request_id=request_id, infos=[], key_modifiers=[],
@@ -465,17 +466,44 @@ def relative_arguments(state, task, action):
     return args
 
 
+def ground_action(state, task, action):
+    args = relative_arguments(state, task, action)
+    skill = action["skill_id"]
+    ops = state["agent_registry"][task["agent_id"]]["operations"]
+    if state["simulation_data"].get("benchmark") == "dexa" and ops[skill]["writes"] and "device_id" in args:
+        public = state["agent_registry"][task["agent_id"]].get("context", {}).get("preferences", {})
+        devices = state["home_config"]["devices"]
+        kind = devices[args["device_id"]]["type"]
+        # An unqualified TV/display request uses the public default. Explicit rooms and
+        # state-dependent references ("the TV that is on") are resolved separately.
+        if kind == "display" and re.search(r"\b(?:on|to) (?:the |my )?(?:tv|display|screen)\b", state["original_user_input"], re.I):
+            clauses = re.split(r"[,;]|\band\b", state["original_user_input"], flags=re.I)
+            clauses = [c for c in clauses if re.search(r"\b(?:tv|display|screen)\b", c, re.I)]
+            room_names = [r.replace("_", " ") for r in state["home_config"]["rooms"]]
+            if (len(clauses) == 1 and not any(r in clauses[0].casefold() for r in room_names)
+                    and not re.search(r"\b(?:that|which|playing|currently|all|both|other)\b", clauses[0], re.I)):
+                default = public.get("default_devices", {}).get(kind)
+                if default and args["device_id"] != default:
+                    raise ValueError(f"GoalError: the unqualified display goal is bound to {default}.")
+    if state["simulation_data"].get("benchmark") == "homeassistant" and ops[skill]["writes"]:
+        from external_benchmarks.agent_registry_homeassistant import bind_write, native_skill
+        skill = native_skill(skill, task["action"], ops)
+        if not any(isinstance(v, dict) and "from_task" in v for v in args.values()):
+            bind_write(state, task, skill, args)
+    return {**action, "skill_id": skill, "arguments": args}
+
+
 def freeze_goal(task, state):
     """Keep the planner's structured goal unchanged through repairs."""
     if "goal" in task:
         return task["goal"]
     requirements = []
     for action in task.get("requirements", task.get("actions", [])):
-        action = {**action, "arguments": relative_arguments(state, task, action)}
-        parameters = operation_parameters(state, task["agent_id"], action["skill_id"], action["arguments"])
-        arguments = {k: deepcopy(v) for k, v in action.get("arguments", {}).items()
-                     if k in parameters and (isinstance(v, dict) and ("from_task" in v or "from_state" in v) or
-                         Draft202012Validator(parameters[k], format_checker=FormatChecker()).is_valid(v))}
+        action = ground_action(state, task, action)
+        op = state["agent_registry"][task["agent_id"]]["operations"][action["skill_id"]]
+        if task.get("goal_kind") == "write" and not op["writes"]:
+            continue
+        arguments = deepcopy(action["arguments"])
         requirements.append({"skill_id": action["skill_id"], "arguments": arguments})
     return deepcopy({"text": task["action"], "scope": task.get("scope", []),
                      "constraints": task.get("constraints", []), "requirements": requirements,
@@ -561,25 +589,51 @@ def check_goal(state, task, actions, *, complete=False):
     requirements = goal.get("requirements", [])
     if not requirements or task.get("parent"):
         return
+    operations = state["agent_registry"][task["agent_id"]]["operations"]
+    def equivalent(left, right):
+        if left == right:
+            return True
+        a, b = operations[left], operations.get(right, {})
+        return (bool(a["writes"] and a["postconditions"])
+                and a["writes"] == b.get("writes") and a["postconditions"] == b.get("postconditions")
+                and all("state" in c for c in a["postconditions"]))
+    quiet = (task["agent_id"] == "audio_system" and re.search(r"\b(?:make it quiet|silence|sound off)\b",
+                 state["original_user_input"], re.I) and not re.search(r"\b(?:keep playing|keep .*on|without|mute only)\b",
+                 state["original_user_input"], re.I))
+    def silent(call):
+        return (call["skill_id"] in {"stop", "turn_off"} or call["skill_id"] == "set_volume"
+                and call["arguments"].get("volume_pct") == 0)
     def matches(action, requirement):
-        if action["skill_id"] != requirement["skill_id"]:
+        if quiet and silent(action) and silent(requirement) and action["skill_id"] != requirement["skill_id"]:
+            return (bool(action["arguments"].get("device_id"))
+                    and action["arguments"]["device_id"] == requirement["arguments"].get("device_id")
+                    and not (requirement["arguments"].keys() - {"device_id", "volume_pct"})
+                    and not (action["arguments"].keys() - {"device_id", "volume_pct"}))
+        if not equivalent(action["skill_id"], requirement["skill_id"]):
             return False
         arguments = requirement["arguments"]
         if any(isinstance(v, dict) and ("from_task" in v or "from_state" in v) for v in arguments.values()):
             arguments = resolve_arguments(state, {"task": task, **requirement,
                                                  "argument_sources": action.get("argument_sources", {})})[0]
+        params = operations[action["skill_id"]]["parameters"]
+        if any(k not in arguments and "default" in params[k] and v != params[k]["default"]
+               for k, v in action["arguments"].items() if k in params):
+            return False
         return all(action["arguments"].get(k) == v or
                    k == "content" and action.get("source_actions") and not goal.get("literal_content")
                    for k, v in arguments.items())
-    allowed = {r["skill_id"] for r in requirements}
-    operations = state["agent_registry"][task["agent_id"]]["operations"]
-    if any(c.get("equals") is True and c.get("state", "").endswith(".power")
-           for skill in allowed for c in operations.get(skill, {}).get("preconditions", [])):
-        allowed.add("turn_on")
     for action in actions:
-        own = [r for r in requirements if r["skill_id"] == action["skill_id"]]
-        if action["skill_id"] not in allowed or own and not any(matches(action, r) for r in own):
-            raise ValueError("GoalError: repair changed the requested operation, target or arguments.")
+        if any(matches(action, r) for r in requirements):
+            continue
+        if not operations[action["skill_id"]]["writes"]:
+            continue
+        if action["skill_id"] == "turn_on" and any(
+                action["arguments"].get("device_id") == r["arguments"].get("device_id")
+                and any(c.get("equals") is True and c.get("state", "").endswith(".power")
+                        for c in operations.get(r["skill_id"], {}).get("preconditions", []))
+                for r in requirements):
+            continue
+        raise ValueError("GoalError: action changes the requested effect, target or arguments.")
     if complete and any(not any(matches(a, r) for a in actions) for r in requirements):
         raise ValueError("GoalError: original requested outcome is still missing.")
 
@@ -613,10 +667,62 @@ def action_footprint(state, action):
     reads = {k.format_map(args) for k in reads}
     reads.update(value["from_state"] for value in (*args.values(), *action.get("argument_sources", {}).values())
                  if isinstance(value, dict) and "from_state" in value)
+    reads.update(g["from_state"] for g in action["task"].get("guards", []) if "from_state" in g)
     for dep in action.get("depends_on", []):
         reads.update(state["action_graph"].get(dep, {}).get("evidence_versions", {}))
     return (reads, {k.format_map(args) for k in definition["writes"]},
             (target_key, args[target_key]))
+
+
+def branch_enabled(state, task):
+    for guard in task.get("guards", []):
+        if "from_state" in guard:
+            actual = state["home_state"][guard["from_state"]]["value"]
+        else:
+            actual = resolve_arguments(state, {"skill_id": "", "task": task,
+                "arguments": {"guard": {"from_task": guard["from_task"], "field": guard["field"]}}})[0]["guard"]
+        op, expected = guard["op"], guard["value"]
+        if op == "eq":
+            passed = actual == expected and (type(actual) is type(expected) or
+                     type(actual) in (int, float) and type(expected) in (int, float))
+        elif op in {"lt", "gt"}:
+            if type(actual) not in (int, float) or type(expected) not in (int, float):
+                raise ValueError("Branch comparison needs a numeric observation.")
+            passed = actual < expected if op == "lt" else actual > expected
+        elif op in {"contains", "excludes"} and isinstance(actual, list):
+            found = any(all(isinstance(item, dict) and item.get(k) == v for k, v in expected.items())
+                        if isinstance(expected, dict) else item == expected for item in actual)
+            passed = found if op == "contains" else not found
+        else:
+            raise ValueError("Invalid branch predicate.")
+        if not passed:
+            return False
+    return True
+
+
+def check_action_time(args, now, reference_time, local_timezone=None):
+    def stamp(value, *, native=False):
+        value = datetime.fromisoformat(value)
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc)
+        if native and not local_timezone:
+            return value
+        if not native:
+            raise ValueError("Timestamp requires a time-zone offset.")
+        zone = ZoneInfo(local_timezone)
+        first, second = value.replace(tzinfo=zone), value.replace(tzinfo=zone, fold=1)
+        if first.utcoffset() != second.utcoffset():
+            raise ValueError("Ambiguous or nonexistent local scheduling time.")
+        return first.astimezone(timezone.utc)
+    for key in ("at", "start_time"):
+        if args.get(key) is not None:
+            native = key == "start_time"
+            if native and not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", args[key]):
+                raise ValueError("Native schedule needs YYYY-MM-DD HH:MM:SS in the simulator time zone.")
+            if stamp(args[key], native=native) <= max(stamp(now, native=native), stamp(reference_time, native=native)):
+                raise ValueError("Scheduled time must be after the reference time and current time.")
+    if args.get("start") and args.get("end") and stamp(args["start"]) >= stamp(args["end"]):
+        raise ValueError("Time window must end after it starts.")
 
 # Only the condition vocabulary currently used in the Cards, without a generic interpreter.
 def check_condition(condition, arguments, home, context):
@@ -661,6 +767,15 @@ def check_condition(condition, arguments, home, context):
     if rule == "nonempty_state":
         actual = value(condition["state"])
         return isinstance(actual, str) and bool(actual.strip())
+    if rule == "appended_entry":
+        key = condition["state"].format_map(arguments)
+        recorded = output_value(context["output"], condition["through"])
+        after = home.get(key, {}).get("value", [])
+        before = context["before"].get(key, {}).get("value", [])
+        if not recorded:
+            return False
+        entry = recorded[-1]
+        return entry in after and entry not in before
     if rule == "valid_content":
         if arguments["content_type"] == "text":
             return True
@@ -732,14 +847,27 @@ def validate_action(state, home=None):
     try:
         with simulator.lock:
             home = {**state["home_state"], **(simulator.snapshot() if home is None else home)}
+            if not branch_enabled({**state, "home_state": home}, task):
+                failure = {"kind": "condition"}
+                raise ValueError("The condition is no longer true.")
             args, source_actions, bindings = resolve_arguments(state, action)
             action.update(arguments=args, source_actions=source_actions, argument_sources=bindings,
                           depends_on=list(dict.fromkeys(action.get("depends_on", []) + source_actions)))
             card = state["agent_registry"][task["agent_id"]]
             if not card["enabled"] or skill not in card["capabilities"] or skill not in card["operations"]:
+                failure = {"kind": "capability"}
                 raise ValueError("Agent oder Skill ist nicht verfuegbar.")
             definition = card["operations"][skill]
-            parameters = operation_parameters(state, task["agent_id"], skill, args)
+            if task.get("goal_kind") == "read" and definition["writes"]:
+                raise ValueError("GoalError: an information request cannot authorise a write.")
+            if state["simulation_data"].get("benchmark") == "homeassistant" and definition["writes"]:
+                from external_benchmarks.agent_registry_homeassistant import bind_write
+                bind_write(state, task, skill, args)
+            try:
+                parameters = operation_parameters(state, task["agent_id"], skill, args)
+            except (KeyError, ValueError):
+                failure = {"kind": "capability"}
+                raise
             for key, schema in parameters.items():
                 if key not in args and "default" in schema:
                     args[key] = deepcopy(schema["default"])
@@ -760,12 +888,17 @@ def validate_action(state, home=None):
             if target["agent_id"] != task["agent_id"] or skill not in target["skills"]:
                 raise ValueError("Agent, Ziel und Skill passen nicht zusammen.")
             if target_key == "device_id" and task.get("scope"):
-                if args[target_key] not in task["scope"] and target.get("room_id") not in task["scope"]:
+                device_ids = {k for k in task["scope"] if k in state["home_config"]["devices"]
+                              and state["home_config"]["devices"][k].get("type") == target.get("type")}
+                if args[target_key] not in task["scope"] and (device_ids or target.get("room_id") not in task["scope"]):
                     raise ValueError("Geraet liegt ausserhalb des zugewiesenen Auftragsbereichs.")
             now = simulator.now()
             context = {"now": now, "mode": "simulation",
                        "search_available": state["simulation_data"].get("search_available", True)}
             if state["settings"]["validate_contracts"]:
+                if skill in {"set_alarm", "schedule", "create_event", "list_events"} or args.get("start_time") is not None:
+                    failure = {"kind": "time"}
+                    check_action_time(args, now, simulator.reference_time, state["simulation_data"].get("timezone"))
                 for condition in definition["preconditions"]:
                     failure = {"kind": "precondition", "condition": condition}
                     if not check_condition(condition, args, home, context):
@@ -786,7 +919,7 @@ def validate_action(state, home=None):
                           dispatch_until=time.monotonic() + 30)
             simulator.reservations[action["task_id"]] = (reads, writes, target)
             return Command(update={"pending_actions": [action, *state["pending_actions"][1:]], "home_state": home}, goto="execute_action")
-    except (KeyError, ValueError, TypeError, AttributeError, OverflowError, ValidationError, NotImplementedError) as exc:
+    except (KeyError, ValueError, TypeError, IndexError, AttributeError, OverflowError, ValidationError, NotImplementedError) as exc:
         result: TaskResult = dict(task_id=action["task_id"], attempt_id=uuid4().hex,
                                  agent_id=task["agent_id"], skill_id=skill, arguments=args,
                                   argument_sources=deepcopy(action.get("argument_sources", {})),
@@ -834,6 +967,15 @@ def execute_action(state):
                 if not check_condition(condition, args, observed, context):
                     raise ValueError("OutcomeError: observed outcome does not match the operation contract.")
             result["verified"] = True
+            if definition["writes"]:
+                effect = any("state" in c or "rule" in c for c in definition["postconditions"])
+                if state["simulation_data"].get("benchmark") == "homeassistant":
+                    from external_benchmarks.agent_registry_homeassistant import observed_effect
+                    effect = observed_effect(skill, args, state, task, observed)
+                    if effect is False:
+                        failure = {"kind": "postcondition"}
+                        raise ValueError("Observed state does not confirm the requested change.")
+                result["effect_observed"] = bool(effect)
         result.update(evidence_versions={k: observed[k]["version"] for k in
                                          set(action["footprint"][0]) | set(action["footprint"][1]) if k in observed},
                       valid_until=time.time() + (600 if not action["footprint"][1] else 3600))
@@ -842,7 +984,15 @@ def execute_action(state):
             value, source="simulation:result", observed_at=simulator.now())
             for key, value in result["output"].items()})
     except Exception as exc:
+        result["verified"] = False
         result["status"] = "failed" if admitted else "stale"
+        if admitted and failure["kind"] in {"tool", "output", "postcondition"}:
+            if getattr(exc, "not_executed", False) or isinstance(exc, ConnectionRefusedError):
+                failure["not_executed"] = True
+                if getattr(exc, "device_unavailable", False):
+                    failure["kind"] = "device_unavailable"
+            elif action["footprint"][1] and not state["agent_registry"][task["agent_id"]]["operations"][skill].get("max_retries"):
+                failure["uncertain_write"] = True
         result["failure"] = failure
         result["error"] = f"ToolError: {type(exc).__name__}: {exc}"
     finally:
@@ -906,33 +1056,83 @@ def domain_response_schema(state, agent, card):
             "additionalProperties": False, "properties": {"request": {"type": "string"}, "reason": {"type": "string"}}}}}}
 
 
+DIRECT_SKILLS = {
+    "get_state", "turn_on", "turn_off", "open", "close", "set_brightness", "set_temperature", "set_volume",
+    "intent__HassTurnOn", "intent__HassTurnOff", "intent__HassSetPosition",
+    "light__HassLightSet", "climate__HassClimateSetTemperature", "media_player__HassSetVolume",
+    "vacuum__HassVacuumStart", "vacuum__HassVacuumStop", "vacuum__HassVacuumReturnToBase",
+}
+
+
+def direct_action(state, task, actions):
+    """Accept a single concrete call scoped to one device; delegate everything else."""
+    if len(actions) != 1 or task["depends_on"] or task["constraints"] or task.get("guards") or len(task["scope"]) != 1:
+        return None
+    if re.search(r"\b(?:all|every|both|before|after|unless|while|when|until|if)\b", task["action"], re.I):
+        return None
+    device = state["home_config"]["devices"].get(task["scope"][0])
+    if not device or device["agent_id"] != task["agent_id"]:
+        return None
+    action = actions[0]
+    args = action["arguments"]
+    if (action["skill_id"] not in DIRECT_SKILLS or action.get("depends_on")
+            or any(isinstance(v, dict) for v in args.values())
+            or args.get("device_id", task["scope"][0]) != task["scope"][0]):
+        return None
+    try:
+        action = ground_action(state, task, action)
+        args = action["arguments"]
+        op = state["agent_registry"][task["agent_id"]]["operations"][action["skill_id"]]
+        if bool(op["writes"]) != (task["goal_kind"] == "write"):
+            return None
+        parameters = operation_parameters(state, task["agent_id"], action["skill_id"], args)
+        schema = {"type": "object", "properties": parameters, "additionalProperties": False,
+                  "required": [k for k, definition in parameters.items() if "default" not in definition]}
+        Draft202012Validator(schema, format_checker=FormatChecker()).validate(args)
+    except (KeyError, ValueError, TypeError, AttributeError, ValidationError):
+        return None
+    return action
+
+
 def planner_response_schema(agents, state=None, repair=None):
     """Keep task descriptions separate from executable tool calls."""
     strings = {"type": "array", "items": {"type": "string"}}
     operation = {"type": "object", "required": ["skill_id", "arguments"], "properties": {
         "task_id": {"type": "string"}, "skill_id": {"type": "string"},
         "arguments": {"type": "object"}, "depends_on": strings}}
+    guard = {"type": "object", "additionalProperties": False, "required": ["op", "value"],
+             "oneOf": [{"required": ["from_state"]}, {"required": ["from_task", "field"]}],
+             "properties": {"from_state": {"type": "string"}, "from_task": {"type": "string"},
+                            "field": {"type": "string"}, "op": {"enum": ["eq", "lt", "gt", "contains", "excludes"]},
+                            "value": {}}}
     task = {"type": "object", "required": ["agent_id", "action"], "properties": {
         "task_id": {"type": "string"}, "agent_id": {"type": "string", "enum": list(agents)},
-        "action": {"type": "string", "minLength": 1}, "depends_on": strings,
+        "action": {"type": "string", "minLength": 1}, "goal_kind": {"enum": ["read", "write"]}, "depends_on": strings,
         "constraints": strings,
+        "guards": {"type": "array", "items": guard},
         "scope": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "requirements": {"type": "array", "items": operation},
         "actions": {"type": "array", "items": operation}}}
-    tasks = []
+    tasks, definitions = [], {}
+    catalogue = get_available_agents(state) if state else {}
     for agent in agents:
         variant = deepcopy(task)
         variant["properties"]["agent_id"] = {"const": agent}
-        if state and (not state["simulation_data"].get("domain_planning_only") or not state["settings"]["domain_agents_enabled"]):
-            calls = action_schema(state, agent, get_available_agents(state)[agent])
+        variant["required"].append("goal_kind")
+        if state and state["settings"]["optional_domain_agents"]:
+            variant["properties"]["requirements"] = {"type": "array", "maxItems": 0}
+            variant["properties"]["actions"]["maxItems"] = 1
+        elif state and (not state["simulation_data"].get("domain_planning_only") or not state["settings"]["domain_agents_enabled"]):
+            key = f"operations{len(definitions)}"
+            definitions[key] = action_schema(state, agent, catalogue[agent])
             for field in ("requirements", "actions"):
-                variant["properties"][field]["items"] = calls
+                variant["properties"][field]["items"] = {"$ref": f"#/$defs/{key}"}
         tasks.append(variant)
     if repair:
         for variant in tasks:
             variant["required"].append("task_id")
             variant["properties"]["task_id"] = {"enum": repair["task_ids"]}
-    return {"type": "object", "required": ["task_queue"], "properties": {
+    return {**({"$defs": definitions} if definitions else {}), "type": "object", "required": ["task_queue"], "properties": {
         "task_queue": {"type": "array", "items": {"anyOf": tasks},
                        **({"minItems": len(repair["task_ids"]), "maxItems": len(repair["task_ids"])} if repair else {})},
         "response": {"type": "string"},
@@ -941,7 +1141,23 @@ def planner_response_schema(agents, state=None, repair=None):
                 "request": {"type": "string"}, "reason": {"type": "string"}}}}}}
 
 
-def _ask(instructions, *, role="planner", expected=None, request_id=None, response_schema=None, **context):
+class ModelFormatError(ValueError):
+    pass
+
+
+class CapabilityError(ValueError):
+    pass
+
+
+def _ask(instructions, **kwargs):
+    try:
+        return _ask_once(instructions, **kwargs)
+    except ModelFormatError as exc:
+        return _ask_once(instructions + " Regenerate complete compact JSON. Omit optional defaults and repetitions.",
+                         **kwargs, format_error=str(exc)[:240])
+
+
+def _ask_once(instructions, *, role="planner", expected=None, request_id=None, response_schema=None, **context):
     schema_state = context.pop("schema_state", None)
     simulator = SIMULATORS.get(request_id)
     if simulator is not None:
@@ -949,7 +1165,7 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, respon
     schema = response_schema
     if schema is None and role == "planner" and context.get("available_agents"):
         schema = planner_response_schema(context["available_agents"], schema_state, context.get("repair"))
-    if schema and context.get("domain_planning_only"):
+    if schema and context.get("domain_planning_only") and role == "planner":
         for task_schema in schema["properties"]["task_queue"]["items"]["anyOf"]:
             task_schema["properties"]["scope"]["minItems"] = 1
             task_schema["required"].append("scope")
@@ -990,12 +1206,14 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, respon
         if call["model"].startswith("ollama:"):
             call["server_timings_s"] = {key: metadata[key] / 1e9 for key in
                 ("total_duration", "load_duration", "prompt_eval_duration", "eval_duration") if metadata.get(key) is not None}
-        result = JsonOutputParser().invoke(response)
+        if {metadata.get("done_reason"), metadata.get("finish_reason")} & {"length", "max_tokens"}:
+            raise ModelFormatError("Output token limit reached.")
+        result = json.loads(response.content)
         if not isinstance(result, dict):
-            raise ValueError("Das Modell muss ein JSON-Objekt liefern.")
+            raise ModelFormatError("Das Modell muss ein JSON-Objekt liefern.")
         for field, kind in (expected or {}).items():
             if field not in result or not isinstance(result[field], kind):
-                raise ValueError(f"Modellantwort: {field!r} fehlt oder ist kein {kind.__name__}.")
+                raise ModelFormatError(f"Modellantwort: {field!r} fehlt oder ist kein {kind.__name__}.")
         if role == "planner" and isinstance(result.get("task_queue"), list):
             for task in result["task_queue"]:
                 if isinstance(task, dict) and "scope" in task:
@@ -1009,11 +1227,17 @@ def _ask(instructions, *, role="planner", expected=None, request_id=None, respon
                                 fill_service_ids(schema_state, task.get("agent_id"), task.get(field, []))
                 else:
                     fill_service_ids(schema_state, context["agent"], result.get("actions", []))
+                    operations = schema_state["agent_registry"][context["agent"]]["operations"]
+                    if any(isinstance(a, dict) and isinstance(a.get("skill_id"), str) and a["skill_id"] not in operations
+                           for a in result.get("actions", [])):
+                        raise CapabilityError("The domain does not expose the proposed operation.")
             Draft202012Validator(schema).validate(result)
         return result
     except Exception as exc:
         if isinstance(exc, ValidationError):
-            exc = ValueError(f"Invalid model response at {list(exc.absolute_path)}: {exc.message}")
+            exc = ModelFormatError(f"Invalid model response at {list(exc.absolute_path)}: {exc.message[:240]}")
+        elif isinstance(exc, json.JSONDecodeError):
+            exc = ModelFormatError(f"Invalid JSON at character {exc.pos}.")
         call["error"] = f"{type(exc).__name__}: {exc}"
         call["technical_error"] = "raw_response" not in call
         raise exc
@@ -1048,6 +1272,20 @@ def read_rejections(result):
     return rejected
 
 
+def confirmed_context(state, task_ids):
+    """Include dependency evidence and completed actions without internal graph metadata."""
+    relevant, pending = set(), list(task_ids)
+    while pending:
+        task_id = pending.pop()
+        if task_id in relevant:
+            continue
+        relevant.update((task_id, task_id + ":help"))
+        pending.extend(state["tasks"].get(task_id, {}).get("depends_on", []))
+    return [{k: action[k] for k in ("task_id", "skill_id", "arguments", "output", "now") if k in action}
+            for action in state["action_graph"].values()
+            if action["status"] == "success" and action["task"]["task_id"] in relevant]
+
+
 def task_planner(state):
     state = refresh_state(state)
     repair = state["repair_context"]
@@ -1064,12 +1302,13 @@ def task_planner(state):
     available = get_available_agents(state)
     graph_mode = state["settings"]["dependency_graph"]
     planner_only = not state["settings"]["domain_agents_enabled"]
-    graph_instruction = (' Give each task a unique task_id (e.g. t1), scope, constraints '
-                         '(conditions, timing, quantities, negation), and depends_on list of task-ID strings. '
-                         'Example: depends_on=["t1", "t2"]. Never put objects or dictionaries in depends_on. '
-                         'Independent goals have depends_on=[]. A task that needs earlier effects/information '
-                         'depends on that predecessor. Combine related goals on the same target or order them. '
-                         if graph_mode else '')
+    graph_instruction = ("Use unique task IDs and explicit predecessor IDs for data or order. Independent tasks have no predecessors. "
+                         "For each conditional branch retain its condition in guards. Every guard uses op and value plus "
+                         "from_state (a public state key) or from_task and field (actual read output path). "
+                         "Use eq, lt, gt, contains or excludes. Guards are ANDed. "
+                         "Attach opposite predicates to otherwise clauses. Create the read task before using its output. "
+                         "If the condition cannot be represented or checked, ask for clarification before writes. "
+                         if graph_mode else "")
     cards, remaining_state = prompt_agents(state, available)
     if not planner_only:
         for card in cards.values():
@@ -1078,14 +1317,26 @@ def task_planner(state):
     context = dict(original_input=state["original_user_input"], available_agents=cards, schema_state=state,
                    search_fixture_queries=list(state["simulation_data"].get("search_results", {})),
                    rooms=state["home_config"]["rooms"], home_state=remaining_state, planner_only=planner_only)
-    if state["simulation_data"].get("domain_planning_only") and not planner_only:
-        # Omit native methods, but keep public context/state for resolving implicit goals.
-        context.update(domain_planning_only=True, home_state={})
-        context["available_agents"] = {agent: {**{k: card[k] for k in ("description", "context") if k in card},
-            "devices": {key: {k: device[k] for k in ("room_id", "type", "state")}
-                        for key, device in card["devices"].items()},
-            "services": {key: {k: service[k] for k in ("room_id", "type", "state")}
-                         for key, service in card["services"].items()}} for agent, card in cards.items()}
+    optional_agents = state["settings"]["optional_domain_agents"]
+    if (state["simulation_data"].get("domain_planning_only") and not planner_only) or optional_agents:
+        context.update(domain_planning_only=not optional_agents, home_state={})
+        for card in cards.values():
+            for section in ("devices", "services"):
+                for key, entity in card[section].items():
+                    compact = {k: entity[k] for k in ("name", "room_id", "type", "state") if k in entity}
+                    if optional_agents and not repair:
+                        methods = entity.get("methods", card.get("methods_by_type", {}).get(entity["type"], {}))
+                        direct = {skill: sorted(params) for skill, params in methods.items() if skill in DIRECT_SKILLS}
+                        if direct:
+                            compact.update(methods=direct, target=entity["target"])
+                    card[section][key] = compact
+            card.pop("operations", None)
+            card.pop("methods_by_type", None)
+        if state["simulation_data"].get("benchmark") == "dexa" and cards:
+            # DEXA supplies one shared set of preferences and rules for the whole home.
+            context["public_preferences"] = next(iter(cards.values())).get("context", {})
+            for card in cards.values():
+                card.pop("context", None)
         context["room_states"] = {key: observation["value"] for key, observation in state["home_state"].items()
                                   if key.startswith("room.")}
     if state["settings"]["intent_analysis_enabled"]:
@@ -1094,83 +1345,30 @@ def task_planner(state):
         context["previous_error"] = state["simulation_data"]["planning_error"]
     if repair:
         context.update(repair=repair, tasks={key: state["tasks"][key] for key in repair["task_ids"]},
-                       confirmed_results=state["task_history"])
+                       confirmed_results=confirmed_context(state, repair["task_ids"]))
     try:
-        result = _ask(('Repair ONLY the listed tasks as JSON; original_input is background. ' if repair else
-                       'Plan the ENTIRE original_input as JSON. ') +
-                      'Resolve implicit targets and values from the public context, entity.state and explicit preferences. '
-                      'Explicit targets and unique observed referents take precedence over default devices. '
-                      'On the initial plan, if an essential choice remains unresolved after using the context '
-                      'or user instructions conflict, put a targeted clarification question in response. '
-                      'Keep all clear, independent goals in task_queue and execute them now; omit only unresolved goals '
-                      'and tasks depending on their answer. Use task_queue=[] only when no independent work is possible. '
-                      'Do not guess or reject a request merely because clarification is needed. '
-                      'Read facts available through tools instead of asking the user for them. '
-                      'This ends the current request; do not wait for a user reply or plan a follow-up dialogue. '
-                      'Otherwise create one task per distinct user goal; preserve order, locations, quantities and conditions. '
-                      'Use only agent IDs and device/service IDs from available_agents. '
-                      'Methods are in entity.methods or the agent card methods_by_type[entity.type]. '
-                      'Each methods map pairs exact skill names with their argument definitions. '
-                      'Use the method KEY as skill_id and its argument names/limits, '
-                      'adding device_id or service_id with the entity ID. '
-                      'Current values are in each entity.state. '
-                      'task.action MUST be a plain-language STRING describing the user goal, never a tool-call object. '
-                      'Concrete tool calls belong only in task.actions, an ARRAY of objects. '
-                      'Give scope as a list of room/device ID strings, e.g. scope=["living_room"]; never an object. '
-                      'Give constraints as strings. '
-                      'Give requirements=[{skill_id,arguments}] for requested outcomes with known targets/values; '
-                      'include every requested device. '
-                      + ('You are the sole action planner. Every task MUST include a nonempty actions array. '
-                         'Catalogue groups are tool owners, not agents you can call. Never delegate. '
-                         'Use read actions and task dependencies for missing information. '
-                         'Use card.context control rules, current states and native units for implicit goals. '
-                         'Preserve schedules with native start_time parameters when supported. '
-                         if planner_only else 'Add actions only when concrete; otherwise let the domain agent refine. ') +
-                      'Add prerequisite actions only when required by the listed method preconditions. '
-                      'Do not add turn_on unless requested or required by those preconditions. '
-                      'Prerequisites belong in actions; they do not replace required outcomes. '
-                      'For missing predecessor data use {"from_task":"<task ID>","field":"<output field>"}; declare its dependency. '
-                      'For displays set source_field to events, inventory or results; literal_content=true only for explicit user text/URLs. '
-                      'For each invalid user subrequest add {"request":"<original clause>","reason":"<unavailable device/method/value>"} '
-                      'only to rejected_requests, never as a tool call. Keep the valid tasks. '
-                      'Do not invent devices or substitute another device type. '
-                      'Check contradictory times against reference_time and observed appliance states; explain conflicts instead of guessing. '
-                      'Reject only when evidence establishes impossibility; '
-                      + ('plan read actions for uncertain state questions. ' if planner_only else
-                         'route uncertain capability/state questions to a domain first. ') +
-                      'Planning/execution failures are not invalid user requests. '
-                      'Intent analysis is optional supporting context; original_input is authoritative. '
-                      'For repair output ONLY repair.task_ids, preserving their IDs, goals and dependencies. '
-                      'Never repeat the original whole plan or introduce new tasks. '
-                      + graph_instruction + ' Output: {"task_queue":[],"rejected_requests":[],"response":""}. '
-                      'A task has task_id, agent_id, action, requirements and '
-                      + ('actions. ' if planner_only else 'optional actions. ') +
-                      'An action has task_id, skill_id, arguments and depends_on. '
-                      'Format example for a SEPARATE illustrative catalogue: agent thermostat, '
-                      'device study_heater, methods={"set_temperature":{"temperature_c":{"type":"number"}}}. '
-                      'Request: Set the study temperature to 21 degrees. Output: '
-                      '{"task_queue":[{"task_id":"t1","agent_id":"thermostat",'
-                      '"action":"Set the study temperature to 21 degrees",'
-                      '"requirements":[{"skill_id":"set_temperature","arguments":{"device_id":"study_heater","temperature_c":21}}],'
-                      '"actions":[{"task_id":"a1","skill_id":"set_temperature",'
-                      '"arguments":{"device_id":"study_heater","temperature_c":21},"depends_on":[]}],'
-                      '"depends_on":[]}],"rejected_requests":[],"response":""}. '
-                      'Use IDs and argument names from the ACTUAL catalogue, not from this illustrative example. '
-                      + ('' if planner_only else
-                         'When domain_planning_only=true, output high-level task goals and scope only; '
-                         'omit actions and requirements. Domain agents receive the full native method catalogue. ') +
-                      ('For room-condition questions use home_information read methods when available; '
-                         'for device questions use its catalogue group read methods. ' if planner_only else
-                         'If home_information is available, route room-condition questions there; device questions go to the device domain. ') +
-                      'Information questions require readings, never state changes. '
-                      'Interpret discomfort as a directional room goal (too hot: lower temperature, too dim: more light). '
-                      'Use original_input and user_location for implicit goals; do not override user perception with sensor values. '
-                      'Use the controlling catalogue group with the room as scope for implicit goals. '
-                      'For future device goals preserve every time relation in action/constraints; use start_time when supported. '
-                      'For appliance-relative timing obtain anchor readings first and declare dependencies; include anchor/target IDs in scope. '
-                      'Interpret relative-to-now times from the fixed reference_time, not a later now. '
-                      'For numeric state changes use {"from_state":"device.<ID>.<field>","add":<signed delta>} '
-                      'instead of calculating a final value. HomeBench percentages change percentage points.',
+        result = _ask(("Repair only repair.task_ids, keeping their IDs, goals, scopes and dependencies. " if repair else
+                       "Plan every goal in original_input, one task per distinct goal. ") +
+                      "Use explicit targets first, then unique public observations, then authorised defaults. Never substitute a device. "
+                      "Read missing facts. For unresolved choices or conflicts ask one specific question in response; execute independent goals now. "
+                      "Use response only for targeted questions; otherwise leave it empty. "
+                      "Reject only demonstrably impossible clauses in rejected_requests with request and reason. Never reject a planning failure. "
+                      "Keep task.action as the user's goal, even when a lookup precedes a write. Set goal_kind to read or write. "
+                      "Use catalogue IDs, entity.methods or methods_by_type, exact arguments and native units. Scope lists room/device IDs. "
+                      "Keep timing, order, quantities, negation and conditions. Requirements describe requested effects, excluding prerequisites. "
+                      "Prefer the native operation for the desired effect. Add power only if required. Preserve exact targets on repair. "
+                      "For predecessor values use {from_task,field}; for relative changes use {from_state,add} (percentages are points). "
+                      "For display data set source_field to events, inventory or results; literal_content only for user-supplied text/URLs. "
+                      "For room questions use home_information if available; device questions use their domain. Information goals only read. "
+                      "Resolve discomfort from the user's direction, room and preferences; use the controlling group and room scope. "
+                      "Use fixed reference_time, native start_time if supported, and anchor readings/dependencies for appliance-relative times. "
+                      "Include anchor and target in scope. Explain contradictory times. "
+                      + ("Supply nonempty actions for every task; never delegate. " if planner_only else
+                         "For a simple goal with one known device ID, no constraints or dependencies, and literal values, give one listed action. "
+                         "Use that device ID as scope and copy entity.target into arguments. Leave complex or repair work to domain agents. "
+                         if optional_agents else
+                         "Give concrete actions when known. In domain_planning_only give goals and scope, omitting actions/requirements. ")
+                      + graph_instruction,
                       role="planner", expected={"task_queue": list}, request_id=state["request_id"], **context)
         rejected = read_rejections(result)
         queue = []
@@ -1185,9 +1383,31 @@ def task_planner(state):
             task_id = raw.get("task_id", f"t{index + 1}") if graph_mode else f"{state['request_id']}:{index}"
             queue.append(dict(task_id=task_id, agent_id=raw["agent_id"], action=raw["action"],
                               depends_on=raw.get("depends_on", []) if graph_mode else [], status="pending",
-                              scope=raw.get("scope", []), constraints=raw.get("constraints", [])))
-            if raw.get("actions"):
-                queue[-1]["actions"] = [{**a, "arguments": relative_arguments(state, queue[-1], a)} for a in raw["actions"]]
+                              scope=raw.get("scope", []), constraints=raw.get("constraints", []), goal_kind=raw.get("goal_kind")))
+            if repair and task_id in state["tasks"]:
+                previous = state["tasks"][task_id]
+                for key in ("scope", "action", "goal_kind", "guards", "depends_on", "constraints"):
+                    if key in previous:
+                        queue[-1][key] = deepcopy(previous[key])
+            elif len(result["task_queue"]) == 1 and state["simulation_data"].get("benchmark") == "homeassistant":
+                command = state["original_user_input"]
+                if (re.match(r"^(?:please\s+)?(?:un)?lock\s+(?:all|the|my|both)\b", command, re.I)
+                        and not re.search(r"\band\b|[;?]", command, re.I)):
+                    queue[-1].update(action=command, goal_kind="write")
+            if graph_mode and not repair:
+                task = queue[-1]
+                task["guards"] = raw.get("guards", [])
+                task["depends_on"] = list(dict.fromkeys(task["depends_on"] +
+                    [g["from_task"].split("/")[0] for g in task["guards"] if "from_task" in g]))
+                if re.match(r"\s*(?:if|unless|otherwise)\b", task["action"], re.I) and not task["guards"]:
+                    raise ValueError("A conditional goal needs an observable guard.")
+            if optional_agents:
+                action = direct_action(state, queue[-1], raw.get("actions", [])) if not repair else None
+                if action:
+                    queue[-1]["actions"] = [action]
+                raw = {**raw, "actions": queue[-1].get("actions", [])}
+            elif raw.get("actions"):
+                queue[-1]["actions"] = [ground_action(state, queue[-1], a) for a in raw["actions"]]
             queue[-1]["goal"] = (deepcopy(state["tasks"][task_id]["goal"])
                                   if repair and task_id in state["tasks"] else freeze_goal({**raw, **queue[-1]}, state))
             if repair and task_id not in repair["task_ids"]:
@@ -1196,7 +1416,10 @@ def task_planner(state):
             for t in queue:
                 refs = [v["from_task"] for a in t.get("actions", []) for v in a.get("arguments", {}).values()
                         if isinstance(v, dict) and "from_task" in v]
-                t["depends_on"] = list(dict.fromkeys(t["depends_on"] + [r.split("/")[0] for r in refs if r.split("/")[0] != t["task_id"]]))
+                required_deps = {r.split("/")[0] for r in refs} - {t["task_id"]}
+                if repair and required_deps - set(t["depends_on"]):
+                    raise ValueError("Repair must preserve task dependencies.")
+                t["depends_on"] = list(dict.fromkeys(t["depends_on"] + sorted(required_deps)))
             ids = {t["task_id"] for t in queue}
             allowed = ids | (state["tasks"].keys() if repair else set())
             if len(ids) != len(queue) or any(not isinstance(t["depends_on"], list)
@@ -1208,18 +1431,15 @@ def task_planner(state):
             if repair:
                 if not set(repair["task_ids"]).issubset(ids):
                     raise ValueError("PlanError: repair must preserve every affected task ID.")
-                for t in queue:
-                    if t["task_id"] not in state["tasks"]:
-                        continue
-                    # Repair may change routing, but keeps the assigned goal and dependencies.
-                    for key in ("action", "scope", "constraints", "repairs", "depends_on"):
-                        if key in state["tasks"][t["task_id"]]:
-                            t[key] = deepcopy(state["tasks"][t["task_id"]][key])
                 settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
                 retained = {i: a for i, a in state["action_graph"].items()
                             if a["task"]["task_id"] not in ids or a["status"] == "success"}
                 for t in queue:
-                    t["generation"] = state["tasks"].get(t["task_id"], {}).get("generation", 0) + 1
+                    previous = state["tasks"][t["task_id"]]
+                    t["generation"] = previous.get("generation", 0) + 1
+                    for key in ("repairs", "lookup_done", "help_done"):
+                        if key in previous:
+                            t[key] = previous[key]
                 return Command(update={"tasks": {**state["tasks"], **{t["task_id"]: t for t in queue}},
                                        "action_graph": retained, "repair_context": {}, "settings": settings,
                                        "rejected_requests": [*state["rejected_requests"], *rejected]}, goto="plan_agents")
@@ -1228,12 +1448,12 @@ def task_planner(state):
                        goto=("plan_agents" if graph_mode else "task_planner") if queue else "finish")
     except (ValueError, KeyError, TypeError, ValidationError) as exc:
         if not repair:
-            if state["settings"]["planner_replan"] and state["settings"]["replans"] < state["settings"]["max_replans"]:
+            if not isinstance(exc, ModelFormatError) and state["settings"]["planner_replan"] and state["settings"]["replans"] < state["settings"]["max_replans"]:
                 return Command(update={"settings": {**state["settings"], "replans": state["settings"]["replans"] + 1},
                     "simulation_data": {**state["simulation_data"], "planning_error": str(exc)}}, goto="task_planner")
             return Command(update={"final_response": json.dumps(
                 {"status": "failed", "error": f"PlannerError: {exc}",
-                 "failure": {"kind": "plan"}}, ensure_ascii=False)}, goto="finish")
+                 "failure": {"kind": "format" if isinstance(exc, ModelFormatError) else "plan"}}, ensure_ascii=False)}, goto="finish")
         error = f"PlannerRepairError: {exc}"
         settings = {**state["settings"], "replans": state["settings"]["replans"] + 1}
         if settings["planner_replan"] and settings["replans"] < settings["max_replans"]:
@@ -1242,7 +1462,7 @@ def task_planner(state):
         tasks = deepcopy(state["tasks"])
         for task_id in repair["task_ids"]:
             tasks[task_id].update(status="failed", terminal=True, error=error,
-                                  failure={"kind": "plan"})
+                                  failure={"kind": "format" if isinstance(exc, ModelFormatError) else "plan"})
         return Command(update={"tasks": tasks, "settings": settings, "repair_context": {}}, goto="plan_agents")
 
 
@@ -1261,49 +1481,21 @@ def _agent(state, agent):
         task = ({"task_id": help_request["task_id"] + ":help", "agent_id": agent, "action": help_request["request"]}
                 if helping else state["task_queue"][0])
         pending = state["pending_task"]
-    graph_instruction = ('Give each action a local task_id (a1, a2, ...) and depends_on list of local action IDs. '
-                         'Use [] for independent actions, and explicit predecessors for prerequisites. '
-                         'If action a2 needs the result of a1, a2 has depends_on=["a1"]. '
-                         'Do not request collaboration when collaboration_allowed is false. '
-                         'For repair, propose only missing/corrective actions; do not repeat retained successful actions. '
-                         'If repair requires changing cross-agent routing/dependencies, return actions=[] with '
-                         'replan_required=true and reason. Stay within the assigned goal and its constraints. '
-                         if graph_mode else '')
     task.setdefault("goal", freeze_goal(task, state))
-    instructions = ('Fulfil ONLY task.action and task.goal; original_input is background, not an additional assignment. '
-                    'Preserve task.goal and its required targets/values; complete all outcomes after prerequisites. '
-                    'Use {"from_task":"t1","field":"results.0.content"} for confirmed predecessor data; '
-                    'use "format":"text" for records/lists. Retrieve missing data through collaboration. '
-                    'Return ordered calls with concrete IDs using operation parameters/conditions. '
-                    'Add prerequisites only when required by the listed operation preconditions; never assume turn_on is required. '
-                    'For plain on/off requests choose the native power method; do not add brightness or mode changes. '
-                    'Use only listed operations; never turn an error message into a skill_id. Do not invent genre matches. '
-                    'Use current state, cards and previous confirmed results. Include prerequisite actions yourself. '
-                    'For numeric changes use {"from_state":"device.<ID>.<field>","add":<signed delta>}; '
-                    'Python computes the final value. HomeBench percentages change percentage points. '
-                    'Never fabricate inventory, time, appointments or search facts. For ALL devices emit separate calls. '
-                    'For information questions use only read methods; obtain the requested values without changing devices. '
-                    'For implicit room goals, use native environment control rules from agent_card.context when provided, '
-                    'current states and the user goal to choose supported controls and required adjustments. '
-                    'Power alone may be insufficient; preserve the requested direction and native units. '
-                    'If a device method offers start_time, set it to a future virtual YYYY-MM-DD HH:MM:SS for delayed execution; '
-                    'omit it for immediate execution. Methods without this parameter cannot schedule device actions. '
-                    'Compute relative-to-now times from reference_time; preserve before/after and chained time relations. '
-                    'For appliance-relative times prefer get_cycle_status.ends_at, or use observed CountdownTime (seconds) with its observation time. '
-                    'cycle_duration gives native cycle seconds by selector value for planning simultaneous completion. '
-                    'Read anchor state first or request information from its domain; never invent a duration or end time. '
-                    'Check all timing claims together; reject contradictions and impossible completion deadlines before control writes. '
-                    'Reject unavailable capabilities or unreachable goals only with catalogue/state/rule evidence. '
-                    'Report unsupported subrequests only in rejected_requests, never as tool calls. '
-                    'Return rejected_requests=[{"request":"<clause>","reason":"<observed limitation or conflict>"}]; '
-                    'actions may be empty for a justified rejection. Keep independent achievable actions. '
-                    'Execution/format errors are not evidence that the user request is impossible. '
-                    'Request one other agent only for missing information; do not ask it to execute your goal. '
-                    'When requesting help, return actions=[] and the collaboration_request object. '
-                    'After receiving help, complete without another collaboration request. ' + graph_instruction + 'Output: '
-                    '{"actions": [{"skill_id": "<operation>", "arguments": {"<parameter>": "<value>"}}], '
-                    '"collaboration_request": {"target": "fridge", "request": "specific question"} or {}, '
-                    '"rejected_requests": []}.')
+    instructions = (
+        "Fulfil only the assigned goal, scope and constraints. Use native operations, exact targets and units. "
+        "A lookup for a write is intermediate. After lookup_done, use the observed target and complete the write. "
+        "Information questions only read. Preserve independent goals and authorised defaults; never substitute a device. "
+        "Use entity.methods or methods_by_type and copy entity.target into arguments. Return compact actions; omit optional defaults. "
+        "Order prerequisites using local IDs and depends_on. Add power only if a precondition requires it. "
+        "Use {from_task,field} for actual predecessor data (format=text for records), {from_state,add} for changes. "
+        "HomeBench percentages are points. Do not invent information or genre matches. Address every requested device. "
+        "Use card.context for implicit room goals and preserve the requested direction. For plain power goals change only power. "
+        "Use native start_time for future actions; anchor relative times to reference_time. Read cycle ends_at or observed "
+        "CountdownTime with its timestamp; use cycle_duration for simultaneous completion. Check deadlines before writes. "
+        "Put evidenced unsupported clauses in rejected_requests with request and reason. Format/tool errors are execution failures. "
+        "For missing data only, return actions=[] and one collaboration_request when allowed. After help complete the goal. "
+        "During repair retain confirmed effects. Set replan_required with reason if cross-agent routing must change.")
     prompt_state = state
     scope = task.get("scope") or [r["arguments"][key] for r in task["goal"]["requirements"]
                                  for key in ("device_id", "service_id") if key in r["arguments"]]
@@ -1323,11 +1515,6 @@ def _agent(state, agent):
         prompt_state = {**state, "home_state": {key: value for key, value in state["home_state"].items()
                                               if key.startswith(prefixes) or key.startswith("room.")}}
     cards, remaining_state = prompt_agents(prompt_state, {agent: available[agent]})
-    instructions += (' Methods are in entity.methods or agent_card.methods_by_type[entity.type]. '
-                     'Method maps pair exact skill names with argument definitions. '
-                     'Use the method KEY as skill_id and its argument names/limits; '
-                     'Copy entity.target into arguments: services require service_id, devices require device_id. '
-                     'State values are nested in each entity.state.')
     try:
         result = _ask(instructions, role=agent, expected={"actions": list}, request_id=state["request_id"],
                       schema_state=state,
@@ -1336,24 +1523,29 @@ def _agent(state, agent):
                       search_fixture_queries=list(state["simulation_data"].get("search_results", {})) if agent == "search_engine" else [],
                       agent=agent, task=task, agent_card=cards[agent], available_agents=list(available),
                       home_state=remaining_state,
-                      task_history=[{**h, "results": [r for r in h["results"]
-                          if r["status"] == "success" and state["action_graph"].get(r["task_id"], {}).get("status") == "success"]}
-                          for h in state["task_history"]] if graph_mode else state["task_history"],
+                      confirmed_results=confirmed_context(state, [task["task_id"]]) if graph_mode else state["task_history"],
                       repair={"attempt": task.get("repairs", 0), "error": task.get("error"),
-                              "retained_actions": [a for a in state["action_graph"].values()
-                                                   if a["task"]["task_id"] == task["task_id"] and a["status"] == "success"],
-                              "previous_results": [{**r, "retained": state["action_graph"].get(r["task_id"], {}).get("status") == "success"}
-                                                   for r in state["task_results"]
-                                                   if r["task_id"].rsplit("/", 1)[0] == task["task_id"]]} if graph_mode else {},
+                              "failure": task.get("failure")} if graph_mode and task.get("failure") else {},
                       now=state["simulation_data"]["now"],
                       collaboration_allowed=not helping and (not pending if graph_mode else pending is None))
         rejected = read_rejections(result)
+        if not graph_mode:
+            result["actions"] = [ground_action(state, task, a) for a in result["actions"]]
+            if not result["actions"] and not rejected and not result.get("collaboration_request"):
+                raise ValueError("No executable actions for this goal.")
     except BackendUnavailable:
         raise
     except Exception as exc:
+        kind = ("format" if isinstance(exc, ModelFormatError) else
+                "capability" if isinstance(exc, CapabilityError) else "plan")
         if not graph_mode:
-            raise
-        return Command(update={"planning_updates": [{"task_id": task["task_id"], "error": str(exc)}]}, goto="collect_plans")
+            owner = state["task_queue"][0]
+            failed = {**owner, "status": "failed", "failure": {"kind": kind}, "error": str(exc)}
+            return Command(update={"tasks": {**state["tasks"], owner["task_id"]: failed},
+                                   "task_queue": state["task_queue"][1:], "collaboration_request": {},
+                                   "pending_task": None}, goto="task_planner")
+        return Command(update={"planning_updates": [{"task_id": task["task_id"], "error": str(exc),
+                         "failure_kind": kind}]}, goto="collect_plans")
     if graph_mode:
         return Command(update={"planning_updates": [{"task_id": task["task_id"], "response": result}]}, goto="collect_plans")
     request = result.get("collaboration_request") or {}
@@ -1425,13 +1617,12 @@ def plan_agents(state):
     affected = invalid | {i for i, a in graph.items() if a["status"] in {"failed", "blocked"}}
     while True:
         previous = set(affected)
-        for i in tuple(affected):
-            changed_keys.update(graph[i]["footprint"][1])
+        # A refused write changed no state. Only observed changes invalidate independent work.
         for i, a in graph.items():
             reads, writes, _ = a["footprint"]
             if affected.intersection(a["depends_on"]):
                 affected.add(i)
-                if a["status"] == "success" and not a.get("superseded"):
+                if a["status"] == "success" and not a.get("superseded") and not a.get("committed"):
                     invalid.add(i)
             elif (set(reads) | set(writes)) & changed_keys:
                 affected.add(i)
@@ -1448,7 +1639,7 @@ def plan_agents(state):
                         "kind": "postcondition" if i in invalid and a["footprint"][1] else "dispatch"}
     graph = {i: a for i, a in graph.items() if i not in invalid}
     for a in graph.values():
-        if a.get("superseded"):
+        if a.get("superseded") or a.get("committed"):
             a["depends_on"] = [d for d in a["depends_on"] if d in graph]
     for task in list(tasks.values()):
         if task["status"] != "failed" or task.get("terminal"):
@@ -1459,9 +1650,10 @@ def plan_agents(state):
         if not state["settings"]["local_repair"] or task.get("requires_replan") or task.get("repairs", 0) >= state["settings"]["max_repairs"]:
             if state["settings"]["planner_replan"] and not task.get("parent") and state["settings"]["replans"] < state["settings"]["max_replans"]:
                 affected = {task["task_id"]} | {t["task_id"] for t in tasks.values()
-                                               if t["status"] == "failed" and t.get("requires_replan")}
+                                               if t["status"] == "failed" and t.get("requires_replan") and not t.get("terminal")}
                 while True:
-                    expanded = affected | {t["task_id"] for t in tasks.values() if affected.intersection(t["depends_on"])}
+                    expanded = affected | {t["task_id"] for t in tasks.values() if not t.get("terminal")
+                                           and t["status"] != "success" and affected.intersection(t["depends_on"])}
                     if expanded == affected:
                         break
                     affected = expanded
@@ -1479,15 +1671,34 @@ def plan_agents(state):
     while changed:
         changed = False
         for task in tasks.values():
-            if task["status"] == "pending" and any(tasks[d]["status"] in {"failed", "blocked", "rejected"} and tasks[d].get("terminal")
-                                                   for d in task["depends_on"]):
+            if task["status"] != "pending":
+                continue
+            deps = [tasks[d] for d in task["depends_on"]]
+            if any(d["status"] == "skipped" for d in deps):
+                task.update(status="skipped", terminal=True)
+                changed = True
+            elif any(d["status"] in {"failed", "blocked", "rejected"} and d.get("terminal") for d in deps):
                 task.update(status="rejected" if any(tasks[d]["status"] == "rejected" for d in task["depends_on"]) else "blocked",
                             error="Vorgaenger abgelehnt oder fehlgeschlagen.")
                 task["terminal"] = True
                 changed = True
+            elif all(d["status"] == "success" for d in deps):
+                try:
+                    if not branch_enabled(state, task):
+                        task.update(status="skipped", terminal=True)
+                        changed = True
+                except (KeyError, TypeError, IndexError, ValueError) as exc:
+                    task.update(status="blocked", terminal=True, error=f"Condition: {exc}", failure={"kind": "condition"})
+                    changed = True
     ready = [t for t in tasks.values() if t["status"] == "pending"
              and all(tasks[d]["status"] == "success" for d in t["depends_on"])][:state["settings"]["max_workers"]]
     if ready:
+        if not state["settings"]["domain_agents_enabled"]:
+            missing = [t["task_id"] for t in ready if not t.get("actions")]
+            if missing:
+                return Command(update={"tasks": tasks, "action_graph": graph, "home_state": home,
+                    "repair_context": {"task_ids": missing, "reason": "Continue the assigned goal using the confirmed lookup."}},
+                    goto="task_planner")
         if not state["settings"]["parallel_agents"]:
             first_agent = next((t for t in ready if not t.get("actions")), None)
             ready = [t for t in ready if t.get("actions") or t is first_agent]
@@ -1502,7 +1713,7 @@ def plan_agents(state):
             return Command(update=update, goto=[Send(t["agent_id"] + "_agent", {**state, **update, "planning_task": t}) for t in agents])
         next_node = "validate_plan" if all(update["tasks"][t["task_id"]]["status"] == "planned" for t in ready) else "plan_agents"
         return Command(update=update, goto=next_node)
-    if all(t["status"] in {"success", "failed", "blocked", "rejected"} for t in tasks.values()):
+    if all(t["status"] in {"success", "failed", "blocked", "rejected", "skipped"} for t in tasks.values()):
         return Command(update={"tasks": tasks, "action_graph": graph, "home_state": home}, goto="finish")
     return Command(update={"tasks": tasks, "action_graph": graph, "home_state": home}, goto="validate_plan")
 
@@ -1516,7 +1727,9 @@ def collect_plans(state):
             continue
         try:
             if "error" in report:
-                raise ValueError(report["error"])
+                kind = report.get("failure_kind", "plan")
+                task.update(status="failed", error=report["error"], failure={"kind": kind}, terminal=kind == "format")
+                continue
             response = report["response"]
             if response.get("replan_required"):
                 task.update(status="failed", requires_replan=True, error=response.get("reason", "Cross-agent repair requested."),
@@ -1534,10 +1747,15 @@ def collect_plans(state):
                 task["status"] = "waiting"
                 continue
             actions = response["actions"]
+            operations = state["agent_registry"][task["agent_id"]]["operations"]
+            if any(a.get("skill_id") not in operations for a in actions):
+                task.update(status="failed", error="The proposed capability is unavailable.",
+                            failure={"kind": "capability"})
+                continue
             fill_service_ids(state, task["agent_id"], actions)
             Draft202012Validator({"type": "array", "items": action_schema(state, task["agent_id"],
                 get_available_agents(state)[task["agent_id"]])}).validate(actions)
-            actions = [{**a, "arguments": relative_arguments(state, task, a)} for a in actions]
+            actions = [ground_action(state, task, a) for a in actions]
             for action in actions:
                 for name, schema in operation_parameters(state, task["agent_id"], action["skill_id"], action["arguments"]).items():
                     if "default" in schema:
@@ -1567,6 +1785,8 @@ def collect_plans(state):
                         missing.append(action)
                 actions = missing
                 if not actions:
+                    if task.get("lookup_done") and not any(a["footprint"][1] for a in retained):
+                        raise ValueError("GoalError: write still missing after lookup.")
                     check_goal(state, task, retained, complete=True)
                     task["status"] = "success"
                     continue
@@ -2028,6 +2248,43 @@ def scheduler(state):
                            "active_actions": [a["task_id"] for a in selected] + [r["task_id"] for r in rejected]},
                    goto=[Send("execute_action", {**state, "pending_actions": [a]}) for a in selected] if selected else "complete_round")
 
+def continue_after_lookup(state, task, actions):
+    """A successful lookup is intermediate evidence for a requested write."""
+    if task.get("goal_kind") != "write" or task.get("parent"):
+        return
+    ops = state["agent_registry"][task["agent_id"]]["operations"]
+    if any(ops[a["skill_id"]]["writes"] for a in actions):
+        return
+    if task.get("lookup_done"):
+        task.update(status="failed", terminal=True, error="Lookup was repeated without the requested write.",
+                    failure={"kind": "plan"})
+        return
+    if state["simulation_data"].get("benchmark") == "homeassistant":
+        from external_benchmarks.agent_registry_homeassistant import scoped_devices
+        seen = set()
+        for a in actions:
+            args = a["arguments"]
+            if "device_id" in args:
+                seen.add(args["device_id"])
+            elif a["skill_id"].endswith("GetLiveContext"):
+                data = a.get("output", {}).get("data", {})
+                names = {name.strip().casefold() for row in re.findall(r"(?im)^\s*-?\s*names:\s*(.+)$", data.get("result", ""))
+                         for name in row.split(",")}
+                seen.update(k for k, d in scoped_devices(state, task, args["service_id"]).items()
+                            if d["name"].casefold() in names)
+        if len(seen) == 1:
+            task["scope"] = sorted(seen)
+            task["goal"]["scope"] = task["scope"]
+        elif not seen or not re.search(r"\b(all|every|both)\b", task["action"], re.I):
+            names = sorted(state["home_config"]["devices"][k]["name"] for k in seen)
+            question = "Which device should I use for “" + task["action"] + "”"
+            task.update(status="blocked", terminal=True, failure={"kind": "clarification"},
+                        question=question + (" (" + ", ".join(names) + ")" if names else "") + "?")
+            return
+    task.update(status="pending", lookup_done=True, generation=task.get("generation", 0) + 1)
+    task.pop("actions", None)
+
+
 def complete_round(state):
     home = {**state["home_state"], **SIMULATORS[state["request_id"]].snapshot()}
     graph_mode = state["settings"]["dependency_graph"]
@@ -2044,13 +2301,19 @@ def complete_round(state):
         if result["status"] == "stale":
             action["dispatch_retries"] = action.get("dispatch_retries", 0) + 1
             action["status"] = "pending" if state["settings"]["dispatch_retries"] and action["dispatch_retries"] <= state["settings"]["max_dispatch_retries"] else "failed"
-        elif result["status"] == "failed" and failure.get("kind") in {"tool", "output", "postcondition"}:
-            if state["settings"]["action_retries"] and action.get("execution_retries", 0) < operation.get("max_retries", 0):
+        elif result["status"] == "failed" and failure.get("kind") in {"tool", "output", "postcondition", "device_unavailable"}:
+            budget = max(operation.get("max_retries", 0), int(bool(failure.get("not_executed"))))
+            if state["settings"]["action_retries"] and action.get("execution_retries", 0) < budget:
                 action["execution_retries"] = action.get("execution_retries", 0) + 1
                 action["status"] = "pending"
         for key in ("output", "before", "evidence_versions", "valid_until", "verified", "error", "failure"):
             if key in result:
                 action[key] = result[key]
+        if (result["status"] == "success" and action.get("footprint", ([], []))[1]
+                and not operation.get("max_retries")
+                and (not operation["postconditions"] or
+                     any(c.get("rule") == "appended_entry" or "output" in c for c in operation["postconditions"]))):
+            action["committed"] = True
         if result["status"] == "success" and result["verified"]:
             written = set(action["footprint"][1])
             for previous in graph.values():
@@ -2083,6 +2346,11 @@ def complete_round(state):
         final = {r["task_id"]: r for r in results}
         task = {**task, "status": "success" if all(r["status"] == "success" for r in final.values()) else "failed",
                 "error": action.get("error"), "failure": action.get("failure")}
+        if task["status"] == "success":
+            continue_after_lookup(state, task, list(final.values()))
+        if task["status"] == "pending":
+            return Command(update={**update, "tasks": {**state["tasks"], task["task_id"]: task},
+                                   "task_queue": [task, *state["task_queue"][1:]]}, goto="task_planner")
         return Command(update={**update, "tasks": {**state["tasks"], task["task_id"]: task},
                                "task_queue": state["task_queue"][1:], "pending_task": None}, goto="task_planner")
     tasks, history = deepcopy(state["tasks"]), []
@@ -2092,15 +2360,20 @@ def complete_round(state):
             continue
         task["status"] = "failed" if any(a["status"] == "failed" for a in actions) else "blocked" if any(a["status"] == "blocked" for a in actions) else "success"
         if task["status"] == "success":
+            continue_after_lookup(state, task, actions)
+        if task["status"] == "success":
             try:
                 check_goal(state, task, [a for a in actions if a["status"] == "success"], complete=True)
                 task.pop("error", None)
                 task.pop("failure", None)
             except ValueError as exc:
                 task.update(status="failed", error=str(exc), failure={"kind": "plan"})
-        else:
+        elif any(a["status"] in {"failed", "blocked"} for a in actions):
             failed = [a for a in actions if a["status"] == "failed"] or [a for a in actions if a["status"] == "blocked"]
             task.update(error="; ".join(a["error"] for a in failed if a.get("error")), failure=failed[0].get("failure"))
+            if any((a.get("failure") or {}).get("uncertain_write") or
+                   (a.get("failure") or {}).get("kind") == "device_unavailable" for a in failed):
+                task["terminal"] = True  # Preserve possibly applied writes and exhausted device retries.
         results = [r for r in state["task_results"] if r["task_id"].rsplit("/", 1)[0] == task["task_id"]]
         history.append({"agent_id": task["agent_id"], "action": task["action"],
                         "type": "collaboration" if task.get("parent") else "completion", "results": results})
@@ -2114,27 +2387,50 @@ def complete_round(state):
                            "active_actions": [], "task_history": history}, goto="plan_agents")
 
 def finish(state):
+    questions = [t["question"] for t in state["tasks"].values() if t.get("question")]
+    if questions:
+        state = {**state, "final_response": " ".join(filter(None, [state["final_response"], *questions]))}
     answer = ""
     if state["simulation_data"].get("answer_enabled"):
         state = refresh_state(state)
-        units = ('Native temperature and humidity readings are scaled by 100; lux and PM10 are unscaled. '
-                 if state["simulation_data"].get("benchmark") == "simuhome" else
-                 'Use the units supplied by the tools and state attributes. ')
-        answer = _ask('Answer original_input using ONLY the supplied observed results and execution report. '
-                      'If execution_report asks for clarification, preserve that targeted question even when tasks ran. '
-                      'Report confirmed independent results, then ask about the unresolved part; do not claim it was executed '
-                      'or that the whole request is complete. End after the question, without waiting for a user reply. '
-                      'For information questions state every requested value and the correct room/device. '
-                      + units +
-                      'Clearly distinguish observations, accepted commands and achieved physical effects. '
-                      'Do not infer completion from command acceptance. Explain failures or missing evidence. '
-                      'For rejected requests explain the supported limitation or timing conflict, including the relevant times. '
-                      'For accepted future actions confirm the schedule, never claim the action has already happened. '
-                      'Return JSON: {"answer":"<natural-language answer>"}.',
-                      role="answer", expected={"answer": str}, request_id=state["request_id"],
-                      original_input=state["original_user_input"], results=state["task_results"],
-                      tasks=state["tasks"], rejected_requests=state["rejected_requests"],
-                      execution_report=state["final_response"])["answer"]
+        writes, reads = [], []
+        separator = "/" if state["settings"]["dependency_graph"] else ":"
+        for t in state["tasks"].values():
+            if t.get("parent") or t["status"] == "skipped":
+                continue
+            results = [r for r in state["task_results"] if r["task_id"].rsplit(separator, 1)[0] == t["task_id"]]
+            if t.get("goal_kind") != "write":
+                reads.append({"action": t["action"], "status": t["status"], "results": [
+                    {k: r.get(k) for k in ("skill_id", "status", "output", "error")} for r in results]})
+                continue
+            if t.get("question") or t["status"] == "rejected":
+                continue
+            goal = t["action"]
+            if t["status"] != "success":
+                writes.append(f'I was unable to complete “{goal}” ({t["agent_id"]}).')
+                continue
+            ops = state["agent_registry"][t["agent_id"]]["operations"]
+            effects = [r for r in results if r["status"] == "success" and ops[r["skill_id"]]["writes"]]
+            times = [r["arguments"].get("at") or r["arguments"].get("start_time") for r in effects]
+            times = ", ".join(dict.fromkeys(str(at) for at in times if at))
+            status = ("Observed the requested change" if effects and all(r.get("effect_observed") for r in effects)
+                      else "Command accepted" if effects else "No write confirmed")
+            writes.append(f'{status}: {goal}' + (f" ({times})" if times else "") + ".")
+        if reads:
+            units = ("Temperature and humidity are scaled by 100; lux and PM10 are unscaled."
+                     if state["simulation_data"].get("benchmark") == "simuhome" else "Use the observed units.")
+            try:
+                answer = _ask("Answer only the information goals in read_goals, using their successful results. "
+                              "Report missing information honestly. Python reports device commands separately. " + units,
+                              role="answer", expected={"answer": str}, request_id=state["request_id"],
+                              original_input=state["original_user_input"], read_goals=reads)["answer"]
+            except ModelFormatError:
+                answer = "I could not produce a valid answer for the information request."
+        # Keep format errors separate from targeted questions and preserve all independent results.
+        detail = state["final_response"]
+        if detail.startswith('{"status": "failed"'):
+            detail = "I was unable to complete the request because planning failed."
+        answer = " ".join(filter(None, [answer, *writes, *[r["reason"] for r in state["rejected_requests"]], detail]))
     if state["settings"]["dependency_graph"]:
         summary = [{"task_id": t["task_id"], "agent_id": t["agent_id"], "action": t["action"],
                     "status": t["status"], "error": t.get("error"), "failure": t.get("failure"),
@@ -2202,7 +2498,7 @@ def run_request(text, **setup):
         calls = deepcopy(SIMULATORS[state["request_id"]].llm_calls)
         task_failures = [{"task_id": t["task_id"], "kind": "blocked" if t.get("status") == "blocked" else (t.get("failure") or {}).get("kind", "plan"),
                           "error": t.get("error") or t["status"]} for t in final["tasks"].values()
-                         if t.get("status") in {"failed", "blocked"}]
+                         if t.get("status") in {"failed", "blocked"} and not t.get("question")]
         try:
             response = json.loads(final["final_response"])
         except (TypeError, ValueError):

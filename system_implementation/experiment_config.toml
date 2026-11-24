@@ -45,6 +45,7 @@ include_conditions = true
 search_mode = "fixtures"
 
 domain_agents_enabled = true
+optional_domain_agents = false
 lean_executable = ""
 
 [react]
@@ -129,6 +130,8 @@ max_workers = 1
 [[runs]]
 name = "extended"
 system = "mas"
+[runs.settings]
+optional_domain_agents = true
 
 [[runs]]
 name = "planner_only"
@@ -169,6 +172,7 @@ name = "lean"
 system = "mas"
 [runs.settings]
 checker = "lean"
+optional_domain_agents = true
 
 [[runs]]
 name = "react"

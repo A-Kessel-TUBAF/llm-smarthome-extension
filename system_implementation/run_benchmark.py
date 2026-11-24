@@ -15,7 +15,7 @@ from external_benchmarks.common import (Episode, case_file, create_system, prepa
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent))
-from benchmark.complexity import complexity
+from benchmark.complexity import FEATURES, complexity, estimate
 from benchmark.environment import Session
 from benchmark.evaluation import evaluate
 
@@ -80,6 +80,10 @@ def summarize(rows):
     for metric in sorted(metric_names):
         values = [r['evaluation']['metrics'][metric] for r in evaluated if r['evaluation']['metrics'][metric] is not None]
         result['mean_'+metric] = sum(values)/len(values) if values else None
+    achievable = sum(r['evaluation']['metrics'].get('achievable_goals', 0) for r in evaluated)
+    omitted = sum(r['evaluation']['metrics'].get('omitted_achievable_goals', 0) for r in evaluated)
+    result.update(achievable_goals=achievable, omitted_achievable_goals=omitted,
+                  achievable_goal_coverage=(achievable-omitted)/achievable if achievable else None)
     return result
 
 
@@ -145,13 +149,15 @@ def run_benchmark(category='all', benchmark_path=None, *, system=None, config_pa
             rows.append(previous)
             continue
         session=Session(case)
+        public = session.public_context()
+        complexity_estimate = estimate(case['user_input'], public)
         if previous:
             # Retry only the failed evaluator, never repeat the participant's actions.
             session.state=previous['final_state'];session.initial=previous['initial_state']
             session.calls=previous['tool_calls'];session.injections=previous['injections']
             report,elapsed=previous['report'],previous['latency_s']
         else:
-            episode=Episode('dexa',case['user_input'],session.public_context(),deepcopy(session.tools),session.call,session)
+            episode=Episode('dexa',case['user_input'],public,deepcopy(session.tools),session.call,session)
             started=time.perf_counter()
             report=system_report(participant,episode)
             elapsed=time.perf_counter()-started
@@ -164,7 +170,8 @@ def run_benchmark(category='all', benchmark_path=None, *, system=None, config_pa
         injected=session.injections[0]['sequence'] if session.injections else None
         row={'id':case['id'],'input':case['user_input'],'category':case['category'],'dimension':case.get('dimension','original'),
             'suite':case['suite'],'pair_id':case.get('pair_id'),'failure_mode':case.get('injected_failure',{}).get('mode','none'),
-            'complexity':case['complexity'],'expected_behavior':case['expected_behavior'],'completed':evaluation['score'] in (0,1),
+            'complexity':case['complexity'],'complexity_estimate':complexity_estimate,
+            'expected_behavior':case['expected_behavior'],'completed':evaluation['score'] in (0,1),
             'latency_s':elapsed,'report':report,'model_usage':usage(report),'initial_state':session.initial,'final_state':session.state,
             'tool_calls':session.calls,'injections':session.injections,
             'injection_status':'triggered' if injected else 'not_triggered' if session.fault else 'not_requested',
@@ -175,6 +182,13 @@ def run_benchmark(category='all', benchmark_path=None, *, system=None, config_pa
         write_json(path,row);rows.append(row)
         print(f"[{len(rows)}/{len(cases)}] {case['id']}: score={evaluation['score']} ({elapsed:.2f}s)",flush=True)
     summary={'overall':summarize(rows),'complete':all(r['evaluation']['score'] in (0,1) for r in rows)}
+    summary['complexity_estimation'] = {}
+    for feature in FEATURES:
+        errors = [abs(r['complexity_estimate'][feature] - r['complexity'][feature]) for r in rows
+                  if 'complexity_estimate' in r]
+        summary['complexity_estimation'][feature] = {'n':len(errors),
+            'exact_agreement':errors.count(0)/len(errors) if errors else None,
+            'mean_absolute_error':sum(errors)/len(errors) if errors else None}
     for field in ('suite','dimension','category','failure_mode','pair_id'):
         summary['by_'+field]={str(value):summarize([r for r in rows if r[field]==value]) for value in dict.fromkeys(r[field] for r in rows) if value is not None}
     write_json(output/'summary.json',summary)
